@@ -1,7 +1,7 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=a0d08ec-0651';
-import { holidayName } from './holidays.mjs?v=a0d08ec-0651';
-import { Realtime } from './realtime.mjs?v=a0d08ec-0651';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=d4c3ce1-0710';
+import { holidayName } from './holidays.mjs?v=d4c3ce1-0710';
+import { Realtime } from './realtime.mjs?v=d4c3ce1-0710';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -125,7 +125,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=a0d08ec-0651', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=d4c3ce1-0710', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -725,7 +725,9 @@ function routeSection() {
   h += `<dl class="kv"><dt>この日の便</dt><dd>${fmt(trips.length)} ${rt.mode === 2 ? '本' : '便'}</dd><dt>いま走行中</dt><dd>${fmt(running)} ${W.unit}</dd>`;
   // 前日の深夜便（−24 時間して入れている）は除いて、この日の始発・最終
   const own = trips.filter((x) => x.start >= 0).map((x) => x.start);
-  if (own.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...own))} 〜 ${hhmm(Math.max(...own))} 発</dd>`;
+  const day = own.filter((x) => x >= 3 * 3600);
+  const late = (sec) => (sec >= 86400 ? `翌 ${hhmm(sec)}` : hhmm(sec));
+  if (own.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...(day.length ? day : own)))} 〜 ${late(Math.max(...own))} 発</dd>`;
   h += '</dl>';
   h += `<div class="act"><button type="button" data-act="fit">この${W.line}に寄る</button>${selTrip ? `<button type="button" data-act="follow" aria-pressed="${follow}">この${W.v}を追う</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
   if (selTrip) h += tripSection();
@@ -917,7 +919,7 @@ function moveRealtime() {
   }
   if (rtFollow) {
     const d = rtData.find((x) => x.key === rtFollow);
-    if (d) map.jumpTo({ center: [d.lon, d.lat] });
+    if (d) followTo(d.lon, d.lat);
   }
 }
 let rtFollow = null; // 追いかけている車両の key
@@ -1140,11 +1142,11 @@ function layers() {
       getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
     }));
     // 電車は角の丸い四角、バスは丸。白い縁（下の層）＋遅れの色（上の層）
-    const sz = z < 9 ? 9 : z < 13 ? 13 : 17;
+    const sz = z < 9 ? 9 : z < 13 ? 12 : 15;
     const common = { data: rtData, iconAtlas: RT_ICONS.url, iconMapping: RT_ICONS.mapping, getIcon: (d) => (d.rail ? 'train' : 'bus'), getPosition: (d) => [d.lon, d.lat], sizeUnits: 'pixels', billboard: false };
-    out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 1.45 : sz) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
+    out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 0.95 : sz) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
     out.push(new IconLayer({
-      ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 1.45 : sz), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
+      ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 0.95 : sz), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
       updateTriggers: { getColor: [rtTick], getSize: [sz] },
     }));
     if (rtFollow) {
@@ -1158,7 +1160,7 @@ function layers() {
       const p = [0, 0, 0];
       schedule.position(j, clock.t, p);
       out.push(new ScatterplotLayer({ id: 'selBus', data: [p], getPosition: (d) => [d[0], d[1]], radiusUnits: 'pixels', getRadius: 9, getFillColor: [...selGeom.c, 255], stroked: true, getLineColor: [255, 255, 255], lineWidthUnits: 'pixels', getLineWidth: 3 }));
-      if (follow) map.jumpTo({ center: [p[0], p[1]] });
+      if (follow) followTo(p[0], p[1]);
     }
   }
   return out;
@@ -1172,9 +1174,24 @@ function frame(now) {
   requestAnimationFrame(frame); // 先に次を頼む（途中でエラーが出ても動き続ける）
   try { frameBody(now); } catch (e) { console.error(e); }
 }
+let wasLive = true;
+function leaveLive() {
+  if (!(panelArea?.rt && rtPanel)) { rtFollow = null; return; }
+  const j = rtPanel.j, following = rtFollow === rtPanel.key;
+  rtFollow = null;
+  if (j >= 0) {
+    // 早送り・時刻の移動では実際の位置は出せないので、同じ便の時刻表どおりの動きに切り替えて追いかけ続ける
+    const { feed, pat } = schedule.tripInfo(j);
+    selTrip = { f: feed.i, k: schedule.ti[j] };
+    follow = following;
+    selectRoute(feed.i, pat.r, { keepTrip: true });
+  } else clearSelection();
+}
 function frameBody(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
+  if (wasLive && !clock.live) leaveLive();
+  wasLive = clock.live;
   if (clock.live) {
     const n = jstNow();
     const d = dayNumOf(n.key);
@@ -1188,6 +1205,7 @@ function frameBody(now) {
   if (schedule.day != null) {
     const w0 = performance.now();
     updateHeads();
+    syncFollowZoom();
     if (rtData.length) moveRealtime();
     updateAreas();
     ensureTrails();
@@ -1313,7 +1331,23 @@ $('theme').onchange = (e) => {
 $('btnSources').onclick = () => $('dlgSources').showModal();
 $('btnHelp').onclick = () => $('dlgHelp').showModal();
 map.on('zoomend', () => { routesLayerDirty = true; });
-map.on('dragstart', () => { if (rtFollow || follow) { rtFollow = null; follow = false; if (panelArea?.rt && rtPanel) showRtVehicle(rtData.find((x) => x.key === rtPanel.key) ?? rtPanel, true); } });
+// 追いかける: 地図の中心を車両に合わせる。拡大・縮小・回転の動きのあいだは合わせ直さない（毎フレーム合わせると拡大・縮小が打ち消された）
+function followTo(lon, lat) {
+  if (map.isZooming() || map.isRotating()) return;
+  map.jumpTo({ center: [lon, lat] });
+}
+// 追いかけているあいだは、ホイール・ピンチの拡大・縮小を画面の中心（＝車両）を基準にする
+let followZoomMode = false;
+function syncFollowZoom() {
+  const on = !!(rtFollow || follow);
+  if (on === followZoomMode) return;
+  followZoomMode = on;
+  const around = on ? 'center' : undefined;
+  map.scrollZoom.disable(); map.scrollZoom.enable(around ? { around } : undefined);
+  map.touchZoomRotate.disable(); map.touchZoomRotate.enable(around ? { around } : undefined);
+}
+// 1 本指・マウスで地図を動かしたら追いかけるのをやめる（2 本指の拡大・縮小ではやめない）
+map.on('dragstart', (e) => { if ((e.originalEvent?.touches?.length ?? 1) > 1) return; if (rtFollow || follow) { rtFollow = null; follow = false; if (panelArea?.rt && rtPanel) showRtVehicle(rtData.find((x) => x.key === rtPanel.key) ?? rtPanel, true); } });
 
 // ---------- 走っている台数のグラフ（時刻のつまみの下） ----------
 function drawHist() {
