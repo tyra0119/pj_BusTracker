@@ -1,7 +1,7 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=4811470-0621';
-import { holidayName } from './holidays.mjs?v=4811470-0621';
-import { Realtime } from './realtime.mjs?v=4811470-0621';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=349e566-0628';
+import { holidayName } from './holidays.mjs?v=349e566-0628';
+import { Realtime } from './realtime.mjs?v=349e566-0628';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -77,8 +77,8 @@ const LINES = [
   { key: 'busline', label: 'バス路線' },
   { key: 'stops', label: '停留所・駅' },
 ];
-const lineOn = { track: true, busline: false, stops: true };
-try { Object.assign(lineOn, JSON.parse(localStorage.getItem('bt.lines')) ?? {}); } catch { /* 使えなくてもよい */ }
+// 開いたときは毎回すべてオフ（利用者の指定。2026-10-04）。前回の切り替えは覚えない
+const lineOn = { track: false, busline: false, stops: false };
 // 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通（上の札で切り替える）
 const MODES = [
   { key: 'bus', label: '路線バス', unit: '台', color: [255, 196, 0] },
@@ -125,7 +125,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=4811470-0621', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=349e566-0628', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1236,7 +1236,6 @@ function renderChips() {
       const k = b.dataset.l;
       lineOn[k] = !lineOn[k];
       b.setAttribute('aria-pressed', String(lineOn[k]));
-      try { localStorage.setItem('bt.lines', JSON.stringify(lineOn)); } catch { /* 使えなくてもよい */ }
       routesLayerDirty = true;
     };
   }
