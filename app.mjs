@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=ac39268-2330';
-import { holidayName } from './holidays.mjs?v=ac39268-2330';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=8600af3-2339';
+import { holidayName } from './holidays.mjs?v=8600af3-2339';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -109,7 +109,7 @@ const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
 let loadedBytes = 0, loadSeq = 0;
 const loadingNow = new Set();
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610031413');
+  const res = await fetch('./data/index.json?v=202610031439');
   index = await res.json();
   renderSources();
   await syncFeeds();
@@ -156,7 +156,7 @@ async function syncFeeds() {
       const m = queue.shift();
       loadingNow.add(m.i);
       try {
-        const r = await fetch(`./data/f/${m.i}.json?v=202610031413`);
+        const r = await fetch(`./data/f/${m.i}.json?v=202610031439`);
         const raw = await r.json();
         if (MOBILE && seq !== loadSeq) continue; // 待つ間に地図が動いた
         if (MOBILE) await new Promise((r) => requestAnimationFrame(() => r())); // 解析のあと、描画に順番を譲る
@@ -533,7 +533,8 @@ function routeSection() {
   const running = trips.filter((x) => x.start <= clock.t && x.end >= clock.t).length;
   const sub = schedule.substitutes.get(sel.f);
   let h = `<h2><i class="sw" style="background:${rgbCss(rt.rgb)}"></i>${esc(routeName(rt))}${rt.mode ? `<span class="badge m${rt.mode}">${MODES[rt.mode].label}</span>` : ''}</h2>`;
-  h += `<p class="op">${esc(agencyName(feed, rt))}${rt.long && rt.short ? `　${esc(rt.long)}` : ''}${sub != null ? `<span class="badge" title="時刻表の期間外なので ${dateKeyOf(sub)} のダイヤで走らせています">代わりのダイヤ</span>` : ''}</p>`;
+  const unofficial = /非公式/.test(feed.meta.license || '');
+  h += `<p class="op">${unofficial ? '<span class="badge">非公式</span> ' : ''}${esc(agencyName(feed, rt))}${rt.long && rt.short ? `　${esc(rt.long)}` : ''}${sub != null ? `<span class="badge" title="時刻表の期間外なので ${dateKeyOf(sub)} のダイヤで走らせています">代わりのダイヤ</span>` : ''}</p>`;
   const W = words(rt);
   h += `<dl class="kv"><dt>この日の便</dt><dd>${fmt(trips.length)} ${rt.mode === 2 ? '本' : '便'}</dd><dt>いま走行中</dt><dd>${fmt(running)} ${W.unit}</dd>`;
   // 前日の深夜便（−24 時間して入れている）は除いて、この日の始発・最終
@@ -551,6 +552,7 @@ function routeSection() {
     h += '</table>';
   }
   if (feed.meta.note) h += `<p class="note">${esc(feed.meta.note)}</p>`;
+  if (unofficial) h += '<p class="note"><b>非公式・非商用の表示です。この表示について事業者へ問い合わせないでください。</b>最新の時刻は事業者の案内で確かめてください。</p>';
   h += `<p class="note">出典: ${esc(feed.meta.name)}（${esc(feed.meta.src)}・${esc(feed.meta.license)}）。時刻表どおりの位置で、遅れや運休は入っていません。</p>`;
   return h;
 }
@@ -1040,7 +1042,8 @@ function renderSources() {
   const list = index.feeds;
   const bySrc = (s) => list.filter((m) => m.src === s);
   const row = (m) => `<tr><td>${esc(m.name)}${m.agencies?.length && m.agencies[0] !== m.name ? `<br><small>${esc(m.agencies.join('・'))}</small>` : ''}</td><td>${m.page ? `<a href="${esc(m.page)}" target="_blank" rel="noopener">${esc(m.src)}</a>` : esc(m.src)}</td><td>${m.licenseUrl ? `<a href="${esc(m.licenseUrl)}" target="_blank" rel="noopener">${esc(m.license)}</a>` : esc(m.license)}</td><td>${fmt(m.trips)}</td></tr>`;
-  const x = bySrc('事業者サイト');
+  // 事業者の公式サイトの時刻表から組み直したもの（神姫バス・鹿児島市電・伊予鉄など）: 非公式・非商用と、事業者へ問い合わせないことを出す
+  const x = list.filter((m) => /非公式/.test(m.license || ''));
   const hoda = list.filter((m) => /HODA/.test(m.src));
   const unl = bySrc('公開の案内なし');
   $('sourcesBody').innerHTML = `
@@ -1049,7 +1052,7 @@ function renderSources() {
     <ul>
       <li>gtfs-data.jp（GTFSデータリポジトリ）に登録されたデータ: ${fmt(bySrc('gtfs-data.jp').length)} 件</li>
       <li>公共交通オープンデータセンター（ODPT）のデータ: ${fmt(bySrc('ODPT').length)} 件 — 「出典：公共交通オープンデータセンター」。公共交通オープンデータ基本ライセンスのものを含みます</li>
-      ${x.length ? `<li>GTFS を公開していない事業者の、事業者サイトの時刻表から組み直したもの（非公式）: ${fmt(x.length)} 件</li>` : ''}
+      ${x.length ? `<li>GTFS を公開していない事業者の、公式サイトの時刻表から組み直したもの（非公式・非商用）: ${fmt(x.length)} 件</li>` : ''}
     </ul>
     ${hoda.length ? `<p>北海道オープンデータプラットフォーム（HODA）のデータ（${fmt(hoda.length)} 件）: このアプリは、以下の著作物を改変して利用しています。${hoda.map((m) => esc(m.name)).join('、')}、北海道オープンデータ推進協議会、<a href="http://creativecommons.org/licenses/by/2.1/jp/" target="_blank" rel="noopener">クリエイティブ・コモンズ・ライセンス 表示 2.1 日本</a>。</p>` : ''}
     ${unl.length ? `<p>公開の案内が無いがインターネット上で取得できる GTFS の配信（${unl.map((m) => esc(m.name.replace(/（.*$/, ''))).join('・')}）も使っています。ライセンスは確認できていません。</p>` : ''}
