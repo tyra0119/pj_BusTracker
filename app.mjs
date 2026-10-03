@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b2e5d11-dirty-2252';
-import { holidayName } from './holidays.mjs?v=b2e5d11-dirty-2252';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=222354c-dirty-2302';
+import { holidayName } from './holidays.mjs?v=222354c-dirty-2302';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -101,7 +101,7 @@ function goNow() {
 
 // ---------- データ読み込み ----------
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610031349');
+  const res = await fetch('./data/index.json?v=202610031402');
   index = await res.json();
   const list = index.feeds;
   // 見ている範囲に近いものから読む
@@ -114,7 +114,7 @@ async function loadAll() {
     while (queue.length) {
       const m = queue.shift();
       try {
-        const r = await fetch(`./data/f/${m.i}.json?v=202610031349`);
+        const r = await fetch(`./data/f/${m.i}.json?v=202610031402`);
         const raw = await r.json();
         const f = new Feed(m, raw);
         feeds[m.i] = f;
@@ -131,10 +131,12 @@ async function loadAll() {
   renderSources();
 }
 let rebuildTimer = null, lastRebuild = 0;
+// 読み込み中の作り直しは 3 秒に 1 回まで（全国分の便の一覧を作り直すのは重い。1 件ごとに作り直すと読み込みが 30 秒を超えた）
 function scheduleRebuild(now) {
-  clearTimeout(rebuildTimer);
-  const wait = now ? 0 : Date.now() - lastRebuild > 1500 ? 50 : 700;
-  rebuildTimer = setTimeout(() => { lastRebuild = Date.now(); rebuildDay(); }, wait);
+  if (now) { clearTimeout(rebuildTimer); rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); return; }
+  if (rebuildTimer) return;
+  const wait = Math.max(50, lastRebuild + 3000 - Date.now());
+  rebuildTimer = setTimeout(() => { rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); }, wait);
 }
 function rebuildDay() {
   schedule.build(clock.day);
@@ -246,23 +248,30 @@ let busLinesKey = '';
 let stopPts = [];      // { p, f, s }（時刻表のある停留所・駅。見ている範囲）
 let p11Pts = [];       // { p, name, op }（全国のバス停。見ている範囲）
 /** バス路線の線: 全フィードの系統パターンの形状（同じ形は 1 本）。読み込みや表示の切り替えのときだけ作り直す */
+// フィードごとに一度だけ作って覚えておき、表示の切り替えや読み込みのたびには並べ直すだけにする
+function feedBusLines(feed) {
+  if (feed.busLines) return feed.busLines;
+  const out = [], seen = new Set();
+  for (const p of feed.pats) {
+    const m = feed.routes[p.r].mode;
+    if (m > 1 || seen.has(p.g)) continue;
+    seen.add(p.g);
+    const sh = feed.shape(p.g);
+    const path = new Float64Array(sh.lat.length * 2);
+    for (let v = 0; v < sh.lat.length; v++) { path[v * 2] = sh.lon[v]; path[v * 2 + 1] = sh.lat[v]; }
+    out.push({ path, f: feed.i, r: p.r, m });
+  }
+  return (feed.busLines = out);
+}
 function buildBusLines() {
-  const key = `${feeds.filter(Boolean).length}|${modeOn[0]}|${modeOn[1]}`;
+  // 読み込み中は rebuildDay（3 秒に 1 回）のときだけ増やす
+  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}`;
   if (key === busLinesKey) return;
   busLinesKey = key;
   busLines = [];
   for (const feed of feeds) {
     if (!feed) continue;
-    const seen = new Set();
-    for (const p of feed.pats) {
-      const m = feed.routes[p.r].mode;
-      if (m > 1 || !modeOn[m] || seen.has(p.g)) continue;
-      seen.add(p.g);
-      const sh = feed.shape(p.g);
-      const path = new Float64Array(sh.lat.length * 2);
-      for (let v = 0; v < sh.lat.length; v++) { path[v * 2] = sh.lon[v]; path[v * 2 + 1] = sh.lat[v]; }
-      busLines.push({ path, f: feed.i, r: p.r });
-    }
+    for (const l of feedBusLines(feed)) if (modeOn[l.m]) busLines.push(l);
   }
 }
 function buildRouteLines() {
