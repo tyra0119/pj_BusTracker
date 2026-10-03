@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b4f031f-dirty-0807';
-import { holidayName } from './holidays.mjs?v=b4f031f-dirty-0807';
-import { Realtime } from './realtime.mjs?v=b4f031f-dirty-0807';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=f18a3ea-dirty-0819';
+import { holidayName } from './holidays.mjs?v=f18a3ea-dirty-0819';
+import { Realtime } from './realtime.mjs?v=f18a3ea-dirty-0819';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=b4f031f-dirty-0807', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=f18a3ea-dirty-0819', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -333,29 +333,44 @@ let stopPts = [];      // { p, f, s }（時刻表のある停留所・駅。見�
 let p11Pts = [];       // { p, name, op }（全国のバス停。見ている範囲）
 /** バス路線の線: 全フィードの系統パターンの形状（同じ形は 1 本）。読み込みや表示の切り替えのときだけ作り直す */
 // フィードごとに一度だけ作って覚えておき、表示の切り替えや読み込みのたびには並べ直すだけにする
-function feedBusLines(feed) {
-  if (feed.busLines) return feed.busLines;
+// バス路線の線は重い（全国で数百万点）ので、縮尺で点を間引き（間隔 m）、見ている範囲のデータの分だけ描く（2026-10-04）
+const busLod = (z) => (z < 7 ? 1500 : z < 9 ? 400 : z < 11 ? 80 : z < 14 ? 15 : 0);
+function feedBusLines(feed, gap) {
+  feed.busLines ??= {};
+  if (feed.busLines[gap]) return feed.busLines[gap];
   const out = [], seen = new Set();
+  const g2 = (gap / 111000) ** 2;
   for (const p of feed.pats) {
     const m = feed.routes[p.r].mode;
     if (m > 1 || seen.has(p.g)) continue;
     seen.add(p.g);
-    const sh = feed.shape(p.g);
-    const path = new Float64Array(sh.lat.length * 2);
-    for (let v = 0; v < sh.lat.length; v++) { path[v * 2] = sh.lon[v]; path[v * 2 + 1] = sh.lat[v]; }
+    const sh = feed.shape(p.g), n = sh.lat.length;
+    const keep = [];
+    let lx = Infinity, ly = Infinity;
+    for (let v = 0; v < n; v++) {
+      const x = sh.lon[v] * Math.cos(sh.lat[v] * Math.PI / 180), y = sh.lat[v];
+      if (v === 0 || v === n - 1 || (x - lx) ** 2 + (y - ly) ** 2 >= g2) { keep.push(v); lx = x; ly = y; }
+    }
+    const path = new Float64Array(keep.length * 2);
+    keep.forEach((v, k) => { path[k * 2] = sh.lon[v]; path[k * 2 + 1] = sh.lat[v]; });
     out.push({ path, f: feed.i, r: p.r, m });
   }
-  return (feed.busLines = out);
+  return (feed.busLines[gap] = out);
 }
+let busLinesBounds = null;
 function buildBusLines() {
-  // 読み込み中は rebuildDay（3 秒に 1 回）のときだけ増やす
-  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}`;
-  if (key === busLinesKey) return;
+  const z = map.getZoom(), gap = busLod(z);
+  // 範囲は少し広めに取り、そこから出たときだけ作り直す
+  const v = viewBounds(0);
+  const inside = busLinesBounds && v[0] >= busLinesBounds[0] && v[1] >= busLinesBounds[1] && v[2] <= busLinesBounds[2] && v[3] <= busLinesBounds[3];
+  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}|${gap}`;
+  if (key === busLinesKey && inside) return;
   busLinesKey = key;
+  busLinesBounds = viewBounds(0.6);
   busLines = [];
   for (const feed of feeds) {
-    if (!feed) continue;
-    for (const l of feedBusLines(feed)) if (modeOn[l.m]) busLines.push(l);
+    if (!feed || !boxHit(feed.meta.bbox, busLinesBounds)) continue;
+    for (const l of feedBusLines(feed, gap)) if (modeOn[l.m]) busLines.push(l);
   }
 }
 function buildRouteLines() {
@@ -1010,7 +1025,7 @@ function layers() {
       widthScale: z >= 14 ? 2.2 : z >= 10 ? 1.4 : 1,
       widthUnits: 'pixels',
       widthMinPixels: 0.6,
-      pickable: z >= 9,
+      pickable: z >= 12, // 線の判定（ホバー・押す）は拡大したときだけ。広域で判定すると重い
       autoHighlight: true,
       highlightColor: dark ? [255, 255, 255, 220] : [0, 90, 150, 220],
       updateTriggers: { getColor: [dark] },
