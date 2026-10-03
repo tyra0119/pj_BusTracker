@@ -147,7 +147,16 @@ dialog .close { position: absolute; }
   #head .title { display: none; }
   #head .stats { padding: 6px 10px; }
   #head .stats b { font-size: 18px; }
-  #head .search { flex: 1; min-width: 0; }
+  /* 札は横にスクロールする 1 段に（4 段になって地図の上を隠していた） */
+  #head .chips { flex-wrap: nowrap; overflow-x: auto; width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #head .chips::-webkit-scrollbar { display: none; }
+  #head .chips button { flex: none; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+  #head .stats { padding: 4px 10px; }
+  #head .stats .load { font-size: 11px; }
+  #head .search { flex: 1; min-width: 0; padding: 4px; }
+  #head .search input { padding: 4px 8px; }
+  #head .tools { padding: 4px; }
+  #head .tools button { padding: 4px 8px; font-size: 12px; }
   #head .search input { width: 100%; }
   #qres { width: calc(100vw - 16px); }
   #head .tools { margin-left: 0; }

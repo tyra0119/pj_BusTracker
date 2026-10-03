@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=5ff7c15-2314';
-import { holidayName } from './holidays.mjs?v=5ff7c15-2314';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=53d491e-2320';
+import { holidayName } from './holidays.mjs?v=53d491e-2320';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -21,8 +21,11 @@ let theme = 'dark';
 try { theme = localStorage.getItem('bt.theme') || 'dark'; } catch { /* 使えなくてもよい */ }
 document.documentElement.dataset.theme = theme;
 $('theme').value = theme;
+// スマホ（指で触る・狭い画面）: 見ている範囲だけ読み、描く量と画素を減らす
+const MOBILE = matchMedia('(pointer: coarse)').matches || innerWidth < 760;
 const map = new maplibregl.Map({
   container: 'map',
+  pixelRatio: Math.min(devicePixelRatio || 1, MOBILE ? 1.5 : 2),
   style: STYLES[theme],
   center: [137.2, 36.6],
   zoom: 4.6,
@@ -57,7 +60,7 @@ class FitAllControl {
 }
 map.addControl(new FitAllControl(), 'top-right');
 
-const overlay = new MapboxOverlay({ interleaved: false, layers: [], pickingRadius: 7, onHover, onClick });
+const overlay = new MapboxOverlay({ interleaved: false, layers: [], pickingRadius: MOBILE ? 10 : 7, useDevicePixels: MOBILE ? 1 : true, onHover, onClick });
 map.addControl(overlay);
 
 // ---------- 状態 ----------
@@ -100,35 +103,69 @@ function goNow() {
 }
 
 // ---------- データ読み込み ----------
+// パソコン: 全国分を近い順に全部読む。スマホ: 見ている範囲（少し広め）のデータだけを、合計の大きさに上限を設けて読み、
+// 地図を動かしたら足りない分を読み、範囲から外れたものは手放す（全国 54 MB を一度に読むとスマホでは重い。2026-10-03）
+const BUDGET = MOBILE ? 16 * 1048576 : Infinity;
+let loadedBytes = 0, loadSeq = 0;
+const loadingNow = new Set();
 async function loadAll() {
   const res = await fetch('./data/index.json?v=202610031413');
   index = await res.json();
-  const list = index.feeds;
-  // 見ている範囲に近いものから読む
+  renderSources();
+  await syncFeeds();
+  if (!MOBILE) $('load').textContent = `${fmt(index.feeds.length)} のデータ・${fmt(index.feeds.reduce((s, m) => s + m.trips, 0))} 便`;
+  map.on('moveend', () => { if (MOBILE) { clearTimeout(syncTimer); syncTimer = setTimeout(syncFeeds, 400); } });
+}
+let syncTimer = null;
+async function syncFeeds() {
+  if (!index) return;
+  const seq = ++loadSeq;
   const c = map.getCenter();
   const dist = (m) => { const x = (m.bbox[0] + m.bbox[2]) / 2 - c.lng, y = (m.bbox[1] + m.bbox[3]) / 2 - c.lat; return x * x + y * y; };
-  const queue = [...list].sort((a, b) => dist(a) - dist(b));
-  let done = 0, failed = 0;
+  let list = [...index.feeds].sort((a, b) => dist(a) - dist(b));
+  if (MOBILE) {
+    const v = viewBounds(0.5);
+    const inView = list.filter((m) => boxHit(m.bbox, v));
+    // 予算に収まるだけ（近い順）
+    const want = new Set();
+    let bytes = 0;
+    for (const m of inView) { if (bytes + m.size > BUDGET && want.size) break; want.add(m.i); bytes += m.size; }
+    // 範囲から外れたものを手放す
+    let dropped = 0;
+    for (const f of feeds) {
+      if (f && !want.has(f.i)) { if (sel?.f === f.i || selStop?.f === f.i) clearSelection(); loadedBytes -= f.meta.size; feeds[f.i] = undefined; schedule.feeds[f.i] = undefined; dropped++; }
+    }
+    if (dropped) scheduleRebuild();
+    list = list.filter((m) => want.has(m.i));
+    const partial = want.size < inView.length;
+    $('load').textContent = `見ている範囲 ${fmt(want.size)} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
+  }
+  const queue = list.filter((m) => !feeds[m.i] && !loadingNow.has(m.i));
   const total = queue.length;
+  let done = 0;
   const step = async () => {
-    while (queue.length) {
+    while (queue.length && seq === loadSeq) {
       const m = queue.shift();
+      loadingNow.add(m.i);
       try {
         const r = await fetch(`./data/f/${m.i}.json?v=202610031413`);
         const raw = await r.json();
+        if (MOBILE && seq !== loadSeq) continue; // 待つ間に地図が動いた
         const f = new Feed(m, raw);
         feeds[m.i] = f;
         schedule.addFeed(f);
-      } catch (e) { failed++; console.warn('feed', m.i, e); }
+        loadedBytes += m.size;
+      } catch (e) { console.warn('feed', m.i, e); } finally { loadingNow.delete(m.i); }
       done++;
-      $('load').textContent = `データ ${done} / ${total}`;
+      if (!MOBILE || total > 3) $('load').textContent = `データ ${done} / ${total}`;
       scheduleRebuild();
     }
   };
-  await Promise.all(Array.from({ length: 6 }, step));
-  $('load').textContent = `${fmt(total - failed)} のデータ・${fmt(list.reduce((s, m) => s + m.trips, 0))} 便`;
-  scheduleRebuild(true);
-  renderSources();
+  await Promise.all(Array.from({ length: MOBILE ? 3 : 6 }, step));
+  if (seq === loadSeq) {
+    scheduleRebuild(true);
+    if (MOBILE) $('load').textContent = `見ている範囲 ${fmt(feeds.filter(Boolean).length)} データ`;
+  }
 }
 let rebuildTimer = null, lastRebuild = 0;
 // 読み込み中の作り直しは 3 秒に 1 回まで（全国分の便の一覧を作り直すのは重い。1 件ごとに作り直すと読み込みが 30 秒を超えた）
@@ -663,7 +700,10 @@ function layers() {
     const off = (d) => dim && !(d.f === sel.f && d.r === sel.r);
     const w = z < 6 ? 0.7 : z < 8 ? 0.85 : z < 11 ? 1 : z < 14 ? 1.2 : 1.5;
     const add = dark ? { blend: true, blendColorOperation: 'add', blendColorSrcFactor: 'src-alpha', blendColorDstFactor: 'one', blendAlphaOperation: 'add', blendAlphaSrcFactor: 'one', blendAlphaDstFactor: 'one-minus-src-alpha' } : {};
-    const tiers = [
+    const tiers = MOBILE ? [
+      { id: 'trailLong', k: 1, a: dark ? 0.4 : 0.4, wd: 1.6 },
+      { id: 'trailHead', k: 0.2, a: 1, wd: 2.4 },
+    ] : [
       { id: 'trailLong', k: 1, a: dark ? 0.32 : 0.35, wd: 1.4 },
       { id: 'trailMid', k: 0.35, a: dark ? 0.55 : 0.55, wd: 1.8 },
       { id: 'trailHead', k: 0.1, a: 1, wd: 2.4 },
@@ -735,7 +775,7 @@ function layers() {
     }
   }
   const busData = { length: nRun, attributes: { getPosition: { value: posBuf.subarray(0, nRun * 2), size: 2 }, getFillColor: { value: colBuf.subarray(0, nRun * 4), size: 4 }, getRadius: { value: radBuf.subarray(0, nRun), size: 1 } } };
-  if (theme === 'dark' && z >= 12) {
+  if (theme === 'dark' && z >= 12 && !MOBILE) {
     out.push(new ScatterplotLayer({
       id: 'busGlow', data: busData, radiusUnits: 'pixels', radiusScale: 2.1, opacity: 0.16,
       parameters: { blend: true, blendColorOperation: 'add', blendColorSrcFactor: 'src-alpha', blendColorDstFactor: 'one', blendAlphaOperation: 'add', blendAlphaSrcFactor: 'one', blendAlphaDstFactor: 'one-minus-src-alpha', depthWriteEnabled: false, depthCompare: 'always' },
