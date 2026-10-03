@@ -1,7 +1,7 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2f35822-0643';
-import { holidayName } from './holidays.mjs?v=2f35822-0643';
-import { Realtime } from './realtime.mjs?v=2f35822-0643';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=a0d08ec-0651';
+import { holidayName } from './holidays.mjs?v=a0d08ec-0651';
+import { Realtime } from './realtime.mjs?v=a0d08ec-0651';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -125,7 +125,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=2f35822-0643', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=a0d08ec-0651', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1333,14 +1333,39 @@ function drawHist() {
 }
 addEventListener('resize', drawHist);
 // 情報欄は上の欄（折り返すと高さが変わる）のすぐ下から
+// 上の欄・下の欄（折り返しで高さが変わる）に合わせて、地図のボタン・地図の出典・情報欄を置き直す（重なっていた）
 function placePanel() {
   const narrow = innerWidth < 760;
-  const top = narrow ? null : Math.ceil($('head').getBoundingClientRect().bottom + 8);
-  $('panel').style.top = top ? `${top}px` : '';
-  $('panel').style.maxHeight = top ? `calc(100vh - ${top}px - 150px)` : '';
+  const head = $('head').getBoundingClientRect(), bar = $('bar').getBoundingClientRect();
+  const tr = document.querySelector('.maplibregl-ctrl-top-right'), br = document.querySelector('.maplibregl-ctrl-bottom-right');
+  if (tr) tr.style.top = `${Math.ceil(head.bottom + 6)}px`;
+  if (br) br.style.bottom = `${Math.ceil(innerHeight - bar.top + 6)}px`;
+  const ctrlBottom = tr ? tr.getBoundingClientRect().bottom : head.bottom;
+  const p = $('panel').style;
+  // 情報欄の下端は、下の欄と地図の出典の表示のうち上にある方の上で止める
+  const at = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect();
+  const floor = at && at.height ? Math.min(bar.top, at.top) : bar.top;
+  const gapBottom = Math.ceil(innerHeight - floor + 8);
+  if (narrow) {
+    // スマホ: 地図のボタン（横一列）の下から、下の欄の上まで
+    const top = Math.ceil(Math.max(ctrlBottom, head.bottom) + 8);
+    p.top = ''; p.bottom = `${gapBottom}px`; p.maxHeight = `${Math.max(120, innerHeight - gapBottom - top)}px`;
+  } else {
+    // パソコン: 上の欄の下から、下の欄の上まで。右の地図のボタンを隠さないよう、ボタンの幅だけ左に寄せる
+    const top = Math.ceil(head.bottom + 8);
+    p.top = `${top}px`; p.bottom = ''; p.maxHeight = `${Math.max(160, innerHeight - gapBottom - top)}px`;
+  }
 }
 addEventListener('resize', placePanel);
 new ResizeObserver(placePanel).observe($('head'));
+new ResizeObserver(placePanel).observe($('bar'));
+map.on('load', () => {
+  // スマホでは地図の出典は「i」に畳んでおく（開いたままだと横幅いっぱいで情報欄に重なった）。押すと開く
+  const attrib = document.querySelector('.maplibregl-ctrl-attrib');
+  if (MOBILE) attrib?.classList.remove('maplibregl-compact-show');
+  if (attrib) new ResizeObserver(placePanel).observe(attrib); // 出典を開いたり畳んだりしたら置き直す
+  placePanel();
+});
 
 // ---------- 検索 ----------
 let qItems = [];

@@ -77,7 +77,7 @@ select option { background: var(--panel-solid); }
 .pop label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 
 /* 右の情報欄 */
-#panel { position: fixed; top: 84px; right: 12px; width: 360px; max-height: calc(100vh - 84px - 150px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 10px; z-index: 4; backdrop-filter: blur(6px); }
+#panel { position: fixed; top: 84px; right: 56px; width: 360px; max-height: calc(100vh - 84px - 150px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 10px; z-index: 4; backdrop-filter: blur(6px); }
 #panel .close, dialog .close { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0; border-radius: 50%; }
 #panel h2 { margin: 0 34px 2px 0; font-size: 18px; display: flex; gap: 8px; align-items: center; }
 #panel h2 .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
@@ -157,7 +157,9 @@ dialog .close { position: absolute; }
   #head .chips::-webkit-scrollbar { display: none; }
   #head .chips button { flex: none; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
   #head .stats { padding: 4px 10px; }
-  #head .stats .load { font-size: 11px; }
+  #head .stats { flex-wrap: wrap; row-gap: 0; }
+  #head .stats span { white-space: nowrap; }
+  #head .stats .load { font-size: 11px; width: 100%; }
   #head .search { flex: 1; min-width: 0; padding: 4px; }
   #head .search input { padding: 4px 8px; }
   #head .tools { padding: 4px; }
@@ -166,9 +168,15 @@ dialog .close { position: absolute; }
   #qres { width: calc(100vw - 16px); }
   #head .tools { margin-left: 0; }
   #panel { top: auto; left: 8px; right: 8px; bottom: 150px; width: auto; max-height: 42vh; }
+  .maplibregl-ctrl-bottom-right { right: 0; }
   #bar { left: 8px; right: 8px; bottom: 8px; padding: 8px 10px 4px; }
   #bar .clock b { font-size: 20px; min-width: 92px; }
   #bar .speeds button { padding: 4px 6px; font-size: 12px; }
   #bar .clock input[type="date"] { width: 128px; }
-  .maplibregl-ctrl-top-right { top: 110px; }
+  /* スマホ: 地図のボタンは上の欄の下に横一列（縦に並べると上の欄と情報欄に重なった） */
+  .maplibregl-ctrl-top-right { display: flex; flex-direction: row-reverse; align-items: flex-start; gap: 6px; }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl { margin: 0 !important; }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl:first-child { margin-right: 8px !important; }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group { display: flex; }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group button + button { border-top: none; border-left: 1px solid #ddd; }
 }
