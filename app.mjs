@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=f18a3ea-dirty-0819';
-import { holidayName } from './holidays.mjs?v=f18a3ea-dirty-0819';
-import { Realtime } from './realtime.mjs?v=f18a3ea-dirty-0819';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=ddd4193-0824';
+import { holidayName } from './holidays.mjs?v=ddd4193-0824';
+import { Realtime } from './realtime.mjs?v=ddd4193-0824';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=f18a3ea-dirty-0819', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=ddd4193-0824', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -869,11 +869,11 @@ function onClick(info) {
 }
 
 // ---------- リアルタイムの位置 ----------
-// 印の絵（白で描き、色は deck の mask で付ける）: 丸 = バス、角の丸い四角 = 電車
+// 印の絵（白で描き、色は deck の mask で付ける）: ひし形 = バス（時刻表のバスの丸と見分けるため）、角の丸い四角 = 電車
 const RT_ICONS = (() => {
   const c = document.createElement('canvas'); c.width = 128; c.height = 64;
   const g = c.getContext('2d'); g.fillStyle = '#fff';
-  g.beginPath(); g.arc(32, 32, 30, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.moveTo(32, 1); g.lineTo(63, 32); g.lineTo(32, 63); g.lineTo(1, 32); g.closePath(); g.fill();
   g.beginPath(); if (g.roundRect) g.roundRect(66, 2, 60, 60, 14); else g.rect(66, 2, 60, 60); g.fill();
   return { url: c.toDataURL(), mapping: { bus: { x: 0, y: 0, width: 64, height: 64, mask: true }, train: { x: 64, y: 0, width: 64, height: 64, mask: true } } };
 })();
@@ -945,7 +945,7 @@ function showRtVehicle(o, keepFollow) {
   sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { rt: true };
   if (!keepFollow) { rtFollow = o.key; follow = false; }
   const feed = feeds[o.v.i];
-  let h = `<h2><i class="sw" style="background:${rgbCss(delayColor(o.delay))};border-radius:${o.rail ? '3px' : '50%'}"></i>実際の位置（${o.rail ? '電車' : 'バス'}）</h2>`;
+  let h = `<h2><i class="sw" style="background:${rgbCss(delayColor(o.delay))};border-radius:${o.rail ? '3px' : '1px'};${o.rail ? '' : 'transform:rotate(45deg) scale(.85);'}"></i>実際の位置（${o.rail ? '電車' : 'バス'}）</h2>`;
   if (o.j >= 0) {
     const { pat, route } = schedule.tripInfo(o.j);
     h += `<p class="op">${esc(agencyName(feed, route))}　${esc(routeName(route))}　${esc(pat.h)} 行</p>`;
@@ -1157,12 +1157,19 @@ function layers() {
       id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => d.sp, getTargetPosition: (d) => [d.lon, d.lat],
       getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
     }));
-    // 電車は角の丸い四角、バスは丸。白い縁（下の層）＋遅れの色（上の層）
+    // 配信中の本物の位置であることを示す、ゆっくり明滅する輪
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 500);
+    out.push(new ScatterplotLayer({
+      id: 'rtPulse', data: rtData, getPosition: (d) => [d.lon, d.lat], radiusUnits: 'pixels', getRadius: (z < 9 ? 9 : z < 13 ? 12 : 15) * (0.9 + 0.25 * pulse),
+      filled: false, stroked: true, getLineColor: (d) => [...delayColor(d.delay), Math.round(60 + 120 * pulse)], lineWidthUnits: 'pixels', getLineWidth: 1.5,
+      updateTriggers: { getLineColor: [pulse.toFixed(2), rtTick] },
+    }));
+    // 電車は角の丸い四角、バスはひし形。白い縁（下の層）＋遅れの色（上の層）
     const sz = z < 9 ? 9 : z < 13 ? 12 : 15;
     const common = { data: rtData, iconAtlas: RT_ICONS.url, iconMapping: RT_ICONS.mapping, getIcon: (d) => (d.rail ? 'train' : 'bus'), getPosition: (d) => [d.lon, d.lat], sizeUnits: 'pixels', billboard: false };
-    out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 0.95 : sz) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
+    out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 0.95 : sz * 1.2) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
     out.push(new IconLayer({
-      ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 0.95 : sz), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
+      ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 0.95 : sz * 1.2), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
       updateTriggers: { getColor: [rtTick], getSize: [sz] },
     }));
     if (rtFollow) {
