@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=09d2b65-0839';
-import { holidayName } from './holidays.mjs?v=09d2b65-0839';
-import { Realtime } from './realtime.mjs?v=09d2b65-0839';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=04dd2d1-0856';
+import { holidayName } from './holidays.mjs?v=04dd2d1-0856';
+import { Realtime } from './realtime.mjs?v=04dd2d1-0856';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -112,7 +112,7 @@ const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
 let loadedBytes = 0, loadSeq = 0;
 const loadingNow = new Set();
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610032339');
+  const res = await fetch('./data/index.json?v=202610032353');
   index = await res.json();
   renderSources();
   await syncFeeds();
@@ -126,14 +126,14 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=09d2b65-0839', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=04dd2d1-0856', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
   }
 } catch { /* Worker が使えない */ }
 function fetchFeed(m) {
-  const url = new URL(`./data/f/${m.i}.json?v=202610032339`, location.href).href;
+  const url = new URL(`./data/f/${m.i}.json?v=202610032353`, location.href).href;
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return fetch(url).then((r) => r.json());
   const id = ++reqId;
@@ -1391,7 +1391,8 @@ function drawHist() {
 }
 addEventListener('resize', drawHist);
 // 情報欄は上の欄（折り返すと高さが変わる）のすぐ下から
-// 開いたときの説明: オフになっている札を押すと何が出るか（利用者の指定。2026-10-04）。×・札を押す・地図を動かすと消える
+// 開いたときの説明: オフになっている札を押すと何が出るか（利用者の指定。2026-10-04）。×・札を押す・地図を動かすと消える。
+// 一度消えたら次からは出さない（「使い方」の「札の説明を出す」でいつでも出せる）
 function showHint() {
   const el = $('hint');
   el.innerHTML = `<button type="button" class="close" aria-label="閉じる">×</button>
@@ -1399,17 +1400,22 @@ function showHint() {
     <dl>
       <dt><i class="hk rt"></i>実際の位置</dt><dd>${RT_HELP}</dd>
       ${LINES.map((l) => `<dt><i class="hk ln-${l.key}"></i>${l.label}</dt><dd>${l.help}</dd>`).join('')}
-    </dl>`;
+    </dl>
+    <small>この説明は「使い方」からいつでも出せます</small>`;
   el.hidden = false;
   document.body.classList.add('hinting');
   el.querySelector('.close').onclick = hideHint;
   placePanel();
+  map.once('dragstart', hideHint);
+  map.once('zoomstart', (e) => { if (e.originalEvent) hideHint(); });
 }
 function hideHint() {
   if ($('hint').hidden) return;
   $('hint').hidden = true;
   document.body.classList.remove('hinting');
+  try { localStorage.setItem('bt.hintSeen', '1'); } catch { /* 使えなくてもよい */ }
 }
+$('btnHint').onclick = () => { $('dlgHelp').close(); showHint(); };
 // 上の欄・下の欄（折り返しで高さが変わる）に合わせて、地図のボタン・地図の出典・情報欄を置き直す（重なっていた）
 function placePanel() {
   const narrow = innerWidth < 760;
@@ -1444,9 +1450,9 @@ map.on('load', () => {
   if (MOBILE) attrib?.classList.remove('maplibregl-compact-show');
   if (attrib) new ResizeObserver(placePanel).observe(attrib); // 出典を開いたり畳んだりしたら置き直す
   placePanel();
-  showHint();
-  map.once('dragstart', hideHint);
-  map.once('zoomstart', (e) => { if (e.originalEvent) hideHint(); });
+  let seen = false;
+  try { seen = localStorage.getItem('bt.hintSeen') === '1'; } catch { /* 使えなくてもよい */ }
+  if (!seen) showHint();
 });
 
 // ---------- 検索 ----------

@@ -67,6 +67,9 @@ select option { background: var(--panel-solid); }
 #hint dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; }
 #hint dt { font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 #hint dd { margin: 0; color: var(--muted); }
+#hint small { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+#dlgHelp .hintAgain { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
+#dlgHelp .hintAgain button { margin-right: 6px; }
 #hint .hk { display: inline-block; width: 14px; }
 #hint .hk.rt { width: 10px; height: 10px; border-radius: 50%; background: conic-gradient(#50e182 0 33%, #ffc800 0 66%, #ff5050 0); }
 #hint .hk.ln-track { height: 0; border-top: 2px solid #96afa5; }
