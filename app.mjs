@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=a29964b-0538';
-import { holidayName } from './holidays.mjs?v=a29964b-0538';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2847eba-0549';
+import { holidayName } from './holidays.mjs?v=2847eba-0549';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -35,12 +35,13 @@ const map = new maplibregl.Map({
   attributionControl: { compact: true, customAttribution: 'バス・鉄道: 各事業者・自治体の GTFS-JP ほか（「出典」）／線形: 国土数値情報、© OpenStreetMap contributors' },
   pitchWithRotate: false,
 });
-// 地名は日本語で: CARTO の地図は縮尺によって英語名（name_en）を出すので、現地名（name。日本では日本語）に差し替える
+// 地名は日本語で: CARTO の地図は縮尺によって英語名（name_en）や現地名（name。海は英語）を出すので、日本語名（name:ja）に差し替える
 function japaneseLabels() {
   for (const l of map.getStyle().layers) {
     if (l.type !== 'symbol') continue;
     const tf = map.getLayoutProperty(l.id, 'text-field');
-    if (tf && JSON.stringify(tf).includes('name_en')) map.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'name:ja'], ['get', 'name'], ['get', 'name_en']]);
+    // 地名・海・道路・施設の名前はすべて日本語名（name:ja）を優先する。海（太平洋・日本海など）は name が英語だった
+    if (tf && /name/.test(JSON.stringify(tf))) map.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'name:ja'], ['get', 'name'], ['get', 'name_en']]);
   }
 }
 map.on('style.load', japaneseLabels);
@@ -123,7 +124,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=a29964b-0538', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=2847eba-0549', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
