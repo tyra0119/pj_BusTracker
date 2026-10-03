@@ -57,6 +57,8 @@ select option { background: var(--panel-solid); }
 #head .chips button.line i.ln-busline { border-color: #ffd678; }
 #head .chips button.line i.ln-stops { width: 8px; height: 8px; border: 1.5px solid #c8d2dc; border-radius: 50%; }
 #head .chips button.line[aria-pressed="false"] i.ln { opacity: 0.4; }
+#head .chips button.rtc i { width: 10px; height: 10px; border-radius: 50%; background: conic-gradient(#50e182 0 33%, #ffc800 0 66%, #ff5050 0); box-shadow: 0 0 0 1.5px #fff; }
+#head .chips button.rtc[aria-pressed="false"] i { background: transparent; }
 #panel .badge.m1 { background: rgba(56, 214, 255, 0.18); color: #38d6ff; }
 #panel .badge.m2 { background: rgba(120, 255, 160, 0.16); color: #4fdc84; }
 #panel .badge.m3 { background: rgba(255, 140, 70, 0.18); color: #ff8c46; }

@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="72429de-0557">
+<meta charset="utf-8"><meta name="build" content="4811470-0621">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス軌跡マップ</title>
 <meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=72429de-0557">
+<link rel="stylesheet" href="./style.css?v=4811470-0621">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -23,6 +23,7 @@
     <div class="load" id="load">データを読み込んでいます…</div>
   </div>
   <div class="chips" id="chips" role="group" aria-label="表示する乗り物"></div>
+  <div class="chips" id="rtChip" role="group" aria-label="実際の位置"></div>
   <div class="chips" id="lineChips" role="group" aria-label="線と点の表示"></div>
   <div class="search">
     <input id="q" type="search" placeholder="系統・事業者・停留所を探す" autocomplete="off" aria-label="系統・事業者・停留所を探す">
@@ -98,6 +99,7 @@
     <li>札の<b>線路</b>（全国の線路）・<b>バス路線</b>（バス停を結んだ線）・<b>停留所・駅</b>で、背景の線と点を出したり消したりできます。駅（白い点）は少し拡大すると、停留所は大きく拡大すると出ます。灰色の小さな点は、時刻表のデータがまだ無いバス停（国土数値情報）です。駅や線路を押すと、列車を走らせているか・走らせていない理由が出ます。</li>
     <li><b>バス路線の線・バス・列車・停留所・駅を押すと、その系統・路線を選べます。</b>ほかの系統は暗くなり、その系統のバスだけが光ります。停留所を押すと、そこを通る系統の一覧から選べます。</li>
     <li>上の札（<b>路線バス・高速バス・鉄道・デマンド</b>）を押すと、表示を切り替えられます。数は画面の中でいま走っている台数（デマンドは受付中の区域の数）です。上の欄の「全体」は、読み込んだ全国（スマホでは見た地域）の合計です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</li>
+    <li><b>実際の位置</b>（白い縁の丸）は、走っているバス・列車が配信している現在地（GTFS リアルタイム）です。「いま」のときだけ出ます。色は時刻表との差（緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い）、細い線の先がその便の時刻表どおりの位置です。今は公共交通オープンデータセンターの配信（関東バス・京王バス・西武バス・横浜市営・川崎市・都営・JR東日本・京王線・東武線など約 40）を使っています。</li>
     <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
     <li>右上のボタン: 拡大・縮小・方角（北を上に戻す。右ドラッグや 2 本指で回せます）・現在地・全体表示。</li>
     <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
@@ -107,6 +109,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=72429de-0557"></script>
+<script type="module" src="./app.mjs?v=4811470-0621"></script>
 </body>
 </html>

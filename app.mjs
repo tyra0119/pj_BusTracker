@@ -1,8 +1,9 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=72429de-0557';
-import { holidayName } from './holidays.mjs?v=72429de-0557';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=4811470-0621';
+import { holidayName } from './holidays.mjs?v=4811470-0621';
+import { Realtime } from './realtime.mjs?v=4811470-0621';
 
-const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
+const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer } = deck;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hhmm = (sec) => { sec = ((Math.floor(sec) % 86400) + 86400) % 86400; return `${String(Math.floor(sec / 3600)).padStart(2, '0')}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`; };
@@ -110,7 +111,7 @@ const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
 let loadedBytes = 0, loadSeq = 0;
 const loadingNow = new Set();
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610031439');
+  const res = await fetch('./data/index.json?v=202610032120');
   index = await res.json();
   renderSources();
   await syncFeeds();
@@ -124,14 +125,14 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=72429de-0557', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=4811470-0621', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
   }
 } catch { /* Worker が使えない */ }
 function fetchFeed(m) {
-  const url = new URL(`./data/f/${m.i}.json?v=202610031439`, location.href).href;
+  const url = new URL(`./data/f/${m.i}.json?v=202610032120`, location.href).href;
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return fetch(url).then((r) => r.json());
   const id = ++reqId;
@@ -206,6 +207,7 @@ function scheduleRebuild(now) {
   rebuildTimer = setTimeout(() => { rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); }, wait);
 }
 function rebuildDay() {
+  schedIndex = null;
   const _t0 = performance.now();
   schedule.build(clock.day);
   trails.dirty = true;
@@ -409,7 +411,14 @@ function p11Cell(k) {
 let trackLines = [];
 let stations = [];  // 全国の駅（国土数値情報 N02）{ p, name, lines: [[会社, 路線]] }
 let stationView = []; // 見ている範囲の駅
-let railStatus = {}; // N02 の会社名 → { name, status, reason, contact, where }（scripts/build-rail-status.mjs）
+let railStatus = {};
+// リアルタイムの位置（GTFS-RT）。「いま」のときだけ
+const rt = new Realtime();
+let rtOn = true;
+try { rtOn = localStorage.getItem('bt.rt') !== '0'; } catch { /* 使えなくてもよい */ }
+let rtData = [];      // { lon, lat, sp: [lon,lat]|null, delay: 秒|null, j, v }
+let rtTick = 0;
+let schedIndex = null; // `${フィード}:${便番号}` → 便の通し番号（その日） // N02 の会社名 → { name, status, reason, contact, where }（scripts/build-rail-status.mjs）
 let trackMeta = [];
 async function loadStatic() {
   try {
@@ -426,6 +435,7 @@ async function loadStatic() {
     });
   } catch (e) { console.warn('rail-lines', e); }
   try {
+    await rt.load();
     const sr = await fetch('./data/stations.json');
     if (sr.ok) stations = (await sr.json()).stations.map(([name, lat, lon, lines]) => ({ p: [lon, lat], name, lines }));
     routesLayerDirty = true;
@@ -756,6 +766,7 @@ $('panelBody').addEventListener('click', (e) => {
   else if (b.dataset.act === 'fit') { follow = false; fitRoute(); }
   else if (b.dataset.act === 'follow') { follow = !follow; refreshPanel(); }
   else if (b.dataset.act === 'close') clearSelection();
+  else if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { const { feed, pat } = schedule.tripInfo(rtPanel.j); selTrip = { f: feed.i, k: schedule.ti[rtPanel.j] }; selectRoute(feed.i, pat.r, { keepTrip: true }); }
 });
 $('panelClose').onclick = clearSelection;
 
@@ -787,6 +798,11 @@ function describe(info) {
   if (info.layer.id === 'tracks' && info.object) {
     const m = trackMeta[info.object.li];
     return `<b>${esc(m.name)}</b><span>${esc(m.op)}　押すと列車の有無と理由が出ます</span>`;
+  }
+  if (info.layer.id === 'rt' && info.object) {
+    const o = info.object;
+    const name = o.j >= 0 ? (() => { const { pat, route } = schedule.tripInfo(o.j); return `${routeName(route)}　${pat.h} 行`; })() : feeds[o.v.i]?.meta.name ?? '';
+    return `<b>実際の位置　${esc(name)}</b><span>${delayText(o.delay)}</span>`;
   }
   if (info.layer.id === 'stations' && info.object) {
     const st = info.object;
@@ -820,6 +836,7 @@ function onClick(info) {
   if (info.layer?.id === 'tracks' && info.object) { showTrack(info.object, info.coordinate); return; }
   if (info.layer?.id === 'p11' && info.object) { showP11(info.object); return; }
   if (info.layer?.id === 'stations' && info.object) { showStation(info.object); return; }
+  if (info.layer?.id === 'rt' && info.object) { showRtVehicle(info.object); return; }
   if ((info.layer?.id === 'stops' || info.layer?.id === 'selStops') && info.object) {
     const f = info.object.f ?? sel.f;
     selStop = { f, s: info.object.s };
@@ -829,6 +846,72 @@ function onClick(info) {
   // 何も無い所を押したら選択を外す
   if (sel || selStop) clearSelection();
 }
+
+// ---------- リアルタイムの位置 ----------
+function schedLookup(f, k) {
+  if (!schedIndex) {
+    schedIndex = new Map();
+    for (let j = 0; j < schedule.n; j++) { const key = `${schedule.tf[j]}:${schedule.ti[j]}`; if (!schedIndex.has(key) || schedule.ts[j] >= 0) schedIndex.set(key, j); }
+  }
+  return schedIndex.get(`${f}:${k}`);
+}
+/** 実際の位置が、時刻表ではいつの位置か → 遅れ（秒。正なら遅れ）。形状上のいちばん近い点で見る */
+function delayOf(j, lon, lat) {
+  const { feed, pat, prof, start } = schedule.tripInfo(j);
+  const sh = feed.shape(pat.g);
+  const kx = Math.cos(lat * Math.PI / 180);
+  let best = 0, bd = Infinity;
+  for (let v = 0; v < sh.lat.length; v++) { const dx = (sh.lon[v] - lon) * kx, dy = sh.lat[v] - lat; const d = dx * dx + dy * dy; if (d < bd) { bd = d; best = v; } }
+  if (Math.sqrt(bd) * 111000 > 800) return null; // 経路から 800 m 以上離れている: 便の結びつけが怪しい
+  const dist = sh.cum[best], d = pat.d, arr = prof.arr, dep = prof.dep, n = d.length;
+  let k = 0;
+  while (k < n - 2 && d[k + 1] < dist) k++;
+  const f = d[k + 1] > d[k] ? Math.min(1, Math.max(0, (dist - d[k]) / (d[k + 1] - d[k]))) : 0;
+  const tAt = start + dep[k] + f * (arr[k + 1] - dep[k]);
+  const delay = clock.t - tAt;
+  return Math.abs(delay) > 3 * 3600 ? null : delay;
+}
+const rtFeedOk = (i) => { const f = feeds[i]; if (!f) return false; const v = viewBounds(0.2); return boxHit(f.meta.bbox, v); };
+function updateRealtime() {
+  if (!rtOn || !clock.live) { rtData = []; return; }
+  rt.poll(rtFeedOk);
+  const out = [];
+  for (const v of rt.vehicles(rtFeedOk)) {
+    const map_ = rt.tripMap(v.i);
+    const k = map_?.get(v.tripId);
+    const j = k != null ? schedLookup(v.i, k) : undefined;
+    let sp = null, delay = null;
+    if (j != null) {
+      const p = [0, 0, 0];
+      if (schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) { schedule.position(j, clock.t, p); sp = [p[0], p[1]]; }
+      delay = delayOf(j, v.lon, v.lat);
+    }
+    out.push({ lon: v.lon, lat: v.lat, sp, delay, j: j ?? -1, v });
+  }
+  rtData = out;
+}
+const delayColor = (d) => (d == null ? [200, 205, 215] : d > 300 ? [255, 80, 80] : d > 120 ? [255, 200, 0] : d < -60 ? [90, 170, 255] : [80, 225, 130]);
+const delayText = (d) => (d == null ? '時刻表の便と結べませんでした' : Math.abs(d) < 60 ? 'ほぼ時刻表どおり' : d > 0 ? `約 ${Math.round(d / 60)} 分遅れ` : `約 ${Math.round(-d / 60)} 分早い`);
+function showRtVehicle(o) {
+  sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { rt: true };
+  const feed = feeds[o.v.i];
+  let h = `<h2><i class="sw" style="background:${rgbCss(delayColor(o.delay))};border-radius:50%"></i>実際の位置</h2>`;
+  if (o.j >= 0) {
+    const { pat, route } = schedule.tripInfo(o.j);
+    h += `<p class="op">${esc(agencyName(feed, route))}　${esc(routeName(route))}　${esc(pat.h)} 行</p>`;
+    h += `<dl class="kv"><dt>時刻表との差</dt><dd><b>${delayText(o.delay)}</b></dd>`;
+  } else {
+    h += `<p class="op">${esc(feed?.meta.name ?? '')}</p><dl class="kv"><dt>時刻表との差</dt><dd>${delayText(null)}</dd>`;
+  }
+  const at = o.v.ts ? new Date(o.v.ts * 1000 + 9 * 3600e3).toISOString().slice(11, 19) : '—';
+  h += `<dt>位置の時刻</dt><dd>${at}</dd>${o.v.label ? `<dt>車両</dt><dd>${esc(o.v.label)}</dd>` : ''}</dl>`;
+  h += `<div class="act">${o.j >= 0 ? '<button type="button" data-act="rtroute">この系統を見る</button>' : ''}<button type="button" data-act="close">閉じる</button></div>`;
+  h += '<p class="note">実際の位置は、公共交通オープンデータセンターが配信する GTFS リアルタイム（車両位置）を中継サーバ経由で 30 秒ごとに読んだものです。細い線の先が、同じ便の時刻表どおりの位置です。遅れは、実際の位置を時刻表で通る時刻と比べた目安です。</p>';
+  $('panel').hidden = false;
+  $('panelBody').innerHTML = h;
+  rtPanel = o;
+}
+let rtPanel = null;
 
 // ---------- デマンド交通の区域 ----------
 let activeAreas = [];
@@ -1016,6 +1099,18 @@ function layers() {
     getLineWidth: 1.2,
     pickable: true,
   }));
+  if (rtOn && clock.live && rtData.length) {
+    // 時刻表の位置 → 実際の位置 を細い線で結ぶ（ずれが見える）
+    out.push(new LineLayer({
+      id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => d.sp, getTargetPosition: (d) => [d.lon, d.lat],
+      getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
+    }));
+    out.push(new ScatterplotLayer({
+      id: 'rt', data: rtData, getPosition: (d) => [d.lon, d.lat], radiusUnits: 'pixels', getRadius: z < 9 ? 3.5 : z < 13 ? 5 : 7,
+      getFillColor: (d) => [...delayColor(d.delay), 235], stroked: true, getLineColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255],
+      lineWidthUnits: 'pixels', getLineWidth: 2, pickable: true, updateTriggers: { getFillColor: [rtTick] },
+    }));
+  }
   if (selTrip) {
     const j = findTripIndex(selTrip.f, selTrip.k);
     if (j >= 0 && schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) {
@@ -1062,6 +1157,7 @@ function frameBody(now) {
     $('time').textContent = hhmmss(clock.t);
     if (!sliderDragging) $('slider').value = Math.floor(clock.t);
     $('nRun').textContent = fmt(nView);
+    if (now - rtTick > 1000) { rtTick = now; updateRealtime(); }
     $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] && i < 3 ? x : 0), 0));
     renderChips();
     if (selTrip || selStop || sel) {
@@ -1143,6 +1239,21 @@ function renderChips() {
       try { localStorage.setItem('bt.lines', JSON.stringify(lineOn)); } catch { /* 使えなくてもよい */ }
       routesLayerDirty = true;
     };
+  }
+  if (!$('rtChip').children.length) {
+    $('rtChip').innerHTML = '<button type="button" class="rtc" aria-pressed="false"><i></i>実際の位置<b>0</b></button>';
+    $('rtChip').onclick = () => {
+      rtOn = !rtOn;
+      try { localStorage.setItem('bt.rt', rtOn ? '1' : '0'); } catch { /* 使えなくてもよい */ }
+      if (rtOn && !clock.live) { goNow(); trails.dirty = true; }
+      updateRealtime();
+    };
+  }
+  {
+    const b = $('rtChip').firstChild;
+    b.setAttribute('aria-pressed', String(rtOn));
+    b.querySelector('b').textContent = rtOn && clock.live ? fmt(rtData.length) : '—';
+    b.title = !clock.live ? '実際の位置は「いま」のときだけ見られます（押すと「いま」に戻ります）' : `実際の位置（GTFS リアルタイム） ${rtData.length} 台。色: 緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い`;
   }
   const vb = map.getBounds();
   const counts = [nMode[0], nMode[1], nMode[2], activeAreas.filter((d) => { const [x, y] = d.poly[0]; return x >= vb.getWest() && x <= vb.getEast() && y >= vb.getSouth() && y <= vb.getNorth(); }).length];
