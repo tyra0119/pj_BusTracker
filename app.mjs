@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bc3342e-dirty-2233';
-import { holidayName } from './holidays.mjs?v=bc3342e-dirty-2233';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b2e5d11-dirty-2252';
+import { holidayName } from './holidays.mjs?v=b2e5d11-dirty-2252';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -29,7 +29,7 @@ const map = new maplibregl.Map({
   minZoom: 3.5,
   maxZoom: 18,
   hash: 'map',
-  attributionControl: { compact: true, customAttribution: 'バス: 各事業者・自治体の GTFS-JP ほか（「出典」）' },
+  attributionControl: { compact: true, customAttribution: 'バス・鉄道: 各事業者・自治体の GTFS-JP ほか（「出典」）／線形: 国土数値情報、© OpenStreetMap contributors' },
   pitchWithRotate: false,
 });
 // 地名は日本語で: CARTO の地図は縮尺によって英語名（name_en）を出すので、現地名（name。日本では日本語）に差し替える
@@ -101,7 +101,7 @@ function goNow() {
 
 // ---------- データ読み込み ----------
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610031330');
+  const res = await fetch('./data/index.json?v=202610031349');
   index = await res.json();
   const list = index.feeds;
   // 見ている範囲に近いものから読む
@@ -114,7 +114,7 @@ async function loadAll() {
     while (queue.length) {
       const m = queue.shift();
       try {
-        const r = await fetch(`./data/f/${m.i}.json?v=202610031330`);
+        const r = await fetch(`./data/f/${m.i}.json?v=202610031349`);
         const raw = await r.json();
         const f = new Feed(m, raw);
         feeds[m.i] = f;
@@ -976,6 +976,12 @@ function renderSources() {
     </ul>
     ${x.length ? `<div class="warn">${x.map((m) => `<b>${esc(m.name)}</b>: ${esc(m.license)}。${esc(m.note || '')}。この表示について事業者へ問い合わせないでください。`).join('<br>')}</div>` : ''}
     <p>地図: © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>、© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>。祝日は内閣府の「国民の祝日」から計算。</p>
+    <p>線形と背景のデータ:</p>
+    <ul>
+      <li>バスの走る道（形状の無いデータを道路に沿わせたもの）: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>（ODbL）</li>
+      <li>鉄道の線路・列車の走る線: 国土数値情報（鉄道データ N02-24）国土交通省（CC BY 4.0）</li>
+      <li>全国のバス停留所: 国土数値情報（バス停留所データ P11-22）国土交通省（CC BY 4.0）</li>
+    </ul>
     <p>データの作成日: ${esc(index.generated.slice(0, 10))}</p>
     <table><thead><tr><th>データ</th><th>入手先</th><th>ライセンス</th><th>便</th></tr></thead><tbody>${[...list].sort((a, b) => b.trips - a.trips).map(row).join('')}</tbody></table>`;
 }
