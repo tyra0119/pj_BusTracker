@@ -1,7 +1,7 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=d4c3ce1-0710';
-import { holidayName } from './holidays.mjs?v=d4c3ce1-0710';
-import { Realtime } from './realtime.mjs?v=d4c3ce1-0710';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=c57a137-0715';
+import { holidayName } from './holidays.mjs?v=c57a137-0715';
+import { Realtime } from './realtime.mjs?v=c57a137-0715';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -125,7 +125,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=d4c3ce1-0710', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=c57a137-0715', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -414,8 +414,8 @@ let stationView = []; // 見ている範囲の駅
 let railStatus = {};
 // リアルタイムの位置（GTFS-RT）。「いま」のときだけ
 const rt = new Realtime();
-let rtOn = true;
-try { rtOn = localStorage.getItem('bt.rt') !== '0'; } catch { /* 使えなくてもよい */ }
+// 開いたときは毎回オフ（利用者の指定。2026-10-04）。前回の切り替えは覚えない
+let rtOn = false;
 let rtData = [];      // { lon, lat, sp: [lon,lat]|null, delay: 秒|null, j, v }
 let rtTick = 0;
 let schedIndex = null; // `${フィード}:${便番号}` → 便の通し番号（その日） // N02 の会社名 → { name, status, reason, contact, where }（scripts/build-rail-status.mjs）
@@ -1306,7 +1306,6 @@ function renderChips() {
     $('rtChip').innerHTML = '<button type="button" class="rtc" aria-pressed="false"><i></i>実際の位置<b>0</b></button>';
     $('rtChip').onclick = () => {
       rtOn = !rtOn;
-      try { localStorage.setItem('bt.rt', rtOn ? '1' : '0'); } catch { /* 使えなくてもよい */ }
       if (rtOn && !clock.live) { goNow(); trails.dirty = true; }
       updateRealtime();
     };
