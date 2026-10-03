@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=406e5a9-2314';
-import { holidayName } from './holidays.mjs?v=406e5a9-2314';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=5ff7c15-2314';
+import { holidayName } from './holidays.mjs?v=5ff7c15-2314';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -975,6 +975,8 @@ function renderSources() {
   const bySrc = (s) => list.filter((m) => m.src === s);
   const row = (m) => `<tr><td>${esc(m.name)}${m.agencies?.length && m.agencies[0] !== m.name ? `<br><small>${esc(m.agencies.join('・'))}</small>` : ''}</td><td>${m.page ? `<a href="${esc(m.page)}" target="_blank" rel="noopener">${esc(m.src)}</a>` : esc(m.src)}</td><td>${m.licenseUrl ? `<a href="${esc(m.licenseUrl)}" target="_blank" rel="noopener">${esc(m.license)}</a>` : esc(m.license)}</td><td>${fmt(m.trips)}</td></tr>`;
   const x = bySrc('事業者サイト');
+  const hoda = list.filter((m) => /HODA/.test(m.src));
+  const unl = bySrc('公開の案内なし');
   $('sourcesBody').innerHTML = `
     <p>バスの時刻・停留所・経路は、各事業者・自治体が公開している GTFS-JP（標準的なバス情報フォーマット）を加工して使っています。
     位置は時刻表から計算したもので、実際の運行とは異なります。<b>最新の時刻は各事業者の案内で確かめてください。</b></p>
@@ -983,6 +985,8 @@ function renderSources() {
       <li>公共交通オープンデータセンター（ODPT）のデータ: ${fmt(bySrc('ODPT').length)} 件 — 「出典：公共交通オープンデータセンター」。公共交通オープンデータ基本ライセンスのものを含みます</li>
       ${x.length ? `<li>GTFS を公開していない事業者の、事業者サイトの時刻表から組み直したもの（非公式）: ${fmt(x.length)} 件</li>` : ''}
     </ul>
+    ${hoda.length ? `<p>北海道オープンデータプラットフォーム（HODA）のデータ（${fmt(hoda.length)} 件）: このアプリは、以下の著作物を改変して利用しています。${hoda.map((m) => esc(m.name)).join('、')}、北海道オープンデータ推進協議会、<a href="http://creativecommons.org/licenses/by/2.1/jp/" target="_blank" rel="noopener">クリエイティブ・コモンズ・ライセンス 表示 2.1 日本</a>。</p>` : ''}
+    ${unl.length ? `<p>公開の案内が無いがインターネット上で取得できる GTFS の配信（${unl.map((m) => esc(m.name.replace(/（.*$/, ''))).join('・')}）も使っています。ライセンスは確認できていません。</p>` : ''}
     ${x.length ? `<div class="warn">${x.map((m) => `<b>${esc(m.name)}</b>: ${esc(m.license)}。${esc(m.note || '')}。この表示について事業者へ問い合わせないでください。`).join('<br>')}</div>` : ''}
     <p>地図: © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>、© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>。祝日は内閣府の「国民の祝日」から計算。</p>
     <p>線形と背景のデータ:</p>

@@ -2,7 +2,7 @@
 //  - フィード（build-data.mjs の出力）を読み、選んだ日に走る便を集める
 //  - 時刻 t（その日の 0 時からの秒）で、走っている便の位置を形状に沿って補間する
 //  - 軌跡（TripsLayer）用に、時間の窓の中の経路と通過時刻を作る
-import { holidayName } from './holidays.mjs?v=406e5a9-2314';
+import { holidayName } from './holidays.mjs?v=5ff7c15-2314';
 
 const DAY = 86400;
 const EPOCH = Date.UTC(2000, 0, 1);
