@@ -43,6 +43,8 @@ select option { background: var(--panel-solid); }
 #head .stats { display: flex; gap: 14px; align-items: baseline; }
 #head .stats b { font-size: 22px; color: var(--accent2); font-variant-numeric: tabular-nums; margin-right: 4px; }
 #head .stats span { color: var(--muted); font-size: 12px; }
+#head .stats span i { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+#head .stats b { margin-left: 4px; }
 #head .chips { display: flex; gap: 6px; flex-wrap: wrap; background: none; border: none; padding: 0; }
 #head .chips button { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); backdrop-filter: blur(6px); border-radius: 99px; padding: 6px 12px; font-size: 13px; }
 #head .chips button i { width: 10px; height: 10px; border-radius: 50%; }

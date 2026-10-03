@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=fd3a25b-0514';
-import { holidayName } from './holidays.mjs?v=fd3a25b-0514';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=a29964b-0538';
+import { holidayName } from './holidays.mjs?v=a29964b-0538';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -123,7 +123,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=fd3a25b-0514', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=a29964b-0538', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -230,7 +230,9 @@ let colBuf = new Uint8Array(4 << 16);
 let radBuf = new Float32Array(1 << 16);
 let runIdx = new Int32Array(1 << 16); // 描いた点 → 便
 let nRun = 0, nAll = 0;
-const nMode = [0, 0, 0, 0];
+const nMode = [0, 0, 0, 0];   // 画面の中で走っている数（乗り物ごと）
+const nModeAll = [0, 0, 0, 0]; // 読み込んだ全データの中
+let nView = 0;
 const tmp = [0, 0, 0];
 function updateHeads() {
   if (runBuf.length < schedule.n) { const cap = 1 << Math.ceil(Math.log2(schedule.n + 1)); runBuf = new Int32Array(cap); runIdx = new Int32Array(cap); posBuf = new Float64Array(cap * 2); colBuf = new Uint8Array(cap * 4); radBuf = new Float32Array(cap); }
@@ -238,16 +240,21 @@ function updateHeads() {
   const z = map.getZoom();
   const r = z < 6 ? 1.6 : z < 8 ? 2.2 : z < 11 ? 3 : z < 14 ? 4.5 : 6;
   let q = 0;
-  nMode.fill(0);
+  nMode.fill(0); nModeAll.fill(0); nView = 0;
+  // 数は「画面の中」で数える（全国分を読んでいると、見ていない地域の列車で数が増減して分かりにくかった）
+  const vb = map.getBounds(), vw = vb.getWest(), ve = vb.getEast(), vs = vb.getSouth(), vn = vb.getNorth();
   for (let k = 0; k < m; k++) {
     const j = runBuf[k];
     const fi = schedule.tf[j], feed = feeds[fi];
     if (!feed) continue;
     const pat = feed.pats[feed.trips[schedule.ti[j] * 4]];
     const rt = feed.routes[pat.r];
-    nMode[rt.mode]++;
-    if (!kindOk(rt)) continue;
+    nModeAll[rt.mode]++;
     schedule.position(j, clock.t, tmp);
+    const inView = tmp[0] >= vw && tmp[0] <= ve && tmp[1] >= vs && tmp[1] <= vn;
+    if (inView) nMode[rt.mode]++;
+    if (!kindOk(rt)) continue;
+    if (inView) nView++;
     runIdx[q] = j;
     posBuf[q * 2] = tmp[0]; posBuf[q * 2 + 1] = tmp[1];
     const c = rt.rgb;
@@ -883,7 +890,8 @@ function frameBody(now) {
     uiTick = now;
     $('time').textContent = hhmmss(clock.t);
     if (!sliderDragging) $('slider').value = Math.floor(clock.t);
-    $('nRun').textContent = fmt(nRun);
+    $('nRun').textContent = fmt(nView);
+    $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] && i < 3 ? x : 0), 0));
     renderChips();
     if (selTrip || selStop || sel) {
       panelTimer++;
@@ -965,8 +973,9 @@ function renderChips() {
       routesLayerDirty = true;
     };
   }
-  const counts = [nMode[0], nMode[1], nMode[2], activeAreas.length];
-  [...el.children].forEach((b, i) => { b.querySelector('b').textContent = fmt(counts[i]); b.title = `${MODES[i].label} ${fmt(counts[i])} ${MODES[i].unit}${modeOn[i] ? '' : '（非表示）'}`; });
+  const vb = map.getBounds();
+  const counts = [nMode[0], nMode[1], nMode[2], activeAreas.filter((d) => { const [x, y] = d.poly[0]; return x >= vb.getWest() && x <= vb.getEast() && y >= vb.getSouth() && y <= vb.getNorth(); }).length];
+  [...el.children].forEach((b, i) => { b.querySelector('b').textContent = fmt(counts[i]); b.title = `画面の中: ${MODES[i].label} ${fmt(counts[i])} ${MODES[i].unit}（全体 ${fmt(i < 3 ? nModeAll[i] : activeAreas.length)}）${modeOn[i] ? '' : '（非表示）'}`; });
 }
 $('theme').onchange = (e) => {
   theme = e.target.value;

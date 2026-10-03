@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="fd3a25b-0514">
+<meta charset="utf-8"><meta name="build" content="a29964b-0538">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス軌跡マップ</title>
 <meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=fd3a25b-0514">
+<link rel="stylesheet" href="./style.css?v=a29964b-0538">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -19,7 +19,7 @@
     <p class="sub">バス・鉄道を時刻表どおりに走らせた位置です（実際の位置ではありません）</p>
   </div>
   <div class="stats">
-    <div><b id="nRun">0</b><span>が走行中</span></div>
+    <div><span>画面の中で</span><b id="nRun">0</b><span>走行中（全体 <i id="nAllRun">0</i>）</span></div>
     <div class="load" id="load">データを読み込んでいます…</div>
   </div>
   <div class="chips" id="chips" role="group" aria-label="表示する乗り物"></div>
@@ -97,7 +97,7 @@
     <li>地図はドラッグで移動、ホイールやピンチで拡大できます。</li>
     <li>札の<b>線路</b>（全国の線路）・<b>バス路線</b>（バス停を結んだ線）・<b>停留所・駅</b>で、背景の線と点を出したり消したりできます。停留所は拡大すると出ます。灰色の小さな点は、時刻表のデータがまだ無いバス停（国土数値情報）です。</li>
     <li><b>バス路線の線・バス・列車・停留所・駅を押すと、その系統・路線を選べます。</b>ほかの系統は暗くなり、その系統のバスだけが光ります。停留所を押すと、そこを通る系統の一覧から選べます。</li>
-    <li>上の札（<b>路線バス・高速バス・鉄道・デマンド</b>）を押すと、表示を切り替えられます。数はいま走っている台数（デマンドは受付中の区域の数）です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</li>
+    <li>上の札（<b>路線バス・高速バス・鉄道・デマンド</b>）を押すと、表示を切り替えられます。数は画面の中でいま走っている台数（デマンドは受付中の区域の数）です。上の欄の「全体」は、読み込んだ全国（スマホでは見た地域）の合計です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</li>
     <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
     <li>右上のボタン: 拡大・縮小・方角（北を上に戻す。右ドラッグや 2 本指で回せます）・現在地・全体表示。</li>
     <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
@@ -107,6 +107,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=fd3a25b-0514"></script>
+<script type="module" src="./app.mjs?v=a29964b-0538"></script>
 </body>
 </html>
