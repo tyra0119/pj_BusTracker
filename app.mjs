@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=860558d-0717';
-import { holidayName } from './holidays.mjs?v=860558d-0717';
-import { Realtime } from './realtime.mjs?v=860558d-0717';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2e3e640-0719';
+import { holidayName } from './holidays.mjs?v=2e3e640-0719';
+import { Realtime } from './realtime.mjs?v=2e3e640-0719';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -73,10 +73,11 @@ const clock = { day: 0, t: 0, speed: 1, playing: true, live: true };
 let trailLen = 600;
 // 線と点の表示（上の札）: 線路（全国の線路 N02）・バス路線（バス停を結んだ線）・停留所と駅（全国のバス停 P11 を含む）
 const LINES = [
-  { key: 'track', label: '線路' },
-  { key: 'busline', label: 'バス路線' },
-  { key: 'stops', label: '停留所・駅' },
+  { key: 'track', label: '線路', help: '全国の鉄道の線路を出します。押すと、列車が走っているか・走っていない理由が分かります' },
+  { key: 'busline', label: 'バス路線', help: 'バス停を結んだバスの通り道を出します。押すとその系統を選べます' },
+  { key: 'stops', label: '停留所・駅', help: '駅とバス停を出します（拡大すると出ます）。押すと発車の予定や、時刻表が無い理由が分かります' },
 ];
+const RT_HELP = 'バス・電車が配信している「今の本当の位置」を出します（「いま」のときだけ）。色は時刻表との差、押すとその車両を追いかけます';
 // 開いたときは毎回すべてオフ（利用者の指定。2026-10-04）。前回の切り替えは覚えない
 const lineOn = { track: false, busline: false, stops: false };
 // 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通（上の札で切り替える）
@@ -125,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=860558d-0717', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=2e3e640-0719', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1292,10 +1293,11 @@ function renderChips() {
     };
   }
   if (!$('lineChips').children.length) {
-    $('lineChips').innerHTML = LINES.map((l) => `<button type="button" class="line" data-l="${l.key}" aria-pressed="${!!lineOn[l.key]}"><i class="ln ln-${l.key}"></i>${l.label}</button>`).join('');
+    $('lineChips').innerHTML = LINES.map((l) => `<button type="button" class="line" data-l="${l.key}" aria-pressed="${!!lineOn[l.key]}" title="${l.help}"><i class="ln ln-${l.key}"></i>${l.label}</button>`).join('');
     $('lineChips').onclick = (e) => {
       const b = e.target.closest('button');
       if (!b) return;
+      hideHint();
       const k = b.dataset.l;
       lineOn[k] = !lineOn[k];
       b.setAttribute('aria-pressed', String(lineOn[k]));
@@ -1305,6 +1307,7 @@ function renderChips() {
   if (!$('rtChip').children.length) {
     $('rtChip').innerHTML = '<button type="button" class="rtc" aria-pressed="false"><i></i>実際の位置<b>0</b></button>';
     $('rtChip').onclick = () => {
+      hideHint();
       rtOn = !rtOn;
       if (rtOn && !clock.live) { goNow(); trails.dirty = true; }
       updateRealtime();
@@ -1314,7 +1317,7 @@ function renderChips() {
     const b = $('rtChip').firstChild;
     b.setAttribute('aria-pressed', String(rtOn));
     b.querySelector('b').textContent = rtOn && clock.live ? fmt(rtData.length) : '—';
-    b.title = !clock.live ? '実際の位置は「いま」のときだけ見られます（押すと「いま」に戻ります）' : `実際の位置（GTFS リアルタイム） ${rtData.length} 台。色: 緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い`;
+    b.title = !rtOn ? RT_HELP : !clock.live ? '実際の位置は「いま」のときだけ見られます（押すと「いま」に戻ります）' : `実際の位置（GTFS リアルタイム） ${rtData.length} 台。色: 緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い`;
   }
   const vb = map.getBounds();
   const counts = [nMode[0], nMode[1], nMode[2], activeAreas.filter((d) => { const [x, y] = d.poly[0]; return x >= vb.getWest() && x <= vb.getEast() && y >= vb.getSouth() && y <= vb.getNorth(); }).length];
@@ -1366,6 +1369,25 @@ function drawHist() {
 }
 addEventListener('resize', drawHist);
 // 情報欄は上の欄（折り返すと高さが変わる）のすぐ下から
+// 開いたときの説明: オフになっている札を押すと何が出るか（利用者の指定。2026-10-04）。×・札を押す・地図を動かすと消える
+function showHint() {
+  const el = $('hint');
+  el.innerHTML = `<button type="button" class="close" aria-label="閉じる">×</button>
+    <b>上の札を押すと、地図に足せます（今はオフ）</b>
+    <dl>
+      <dt><i class="hk rt"></i>実際の位置</dt><dd>${RT_HELP}</dd>
+      ${LINES.map((l) => `<dt><i class="hk ln-${l.key}"></i>${l.label}</dt><dd>${l.help}</dd>`).join('')}
+    </dl>`;
+  el.hidden = false;
+  document.body.classList.add('hinting');
+  el.querySelector('.close').onclick = hideHint;
+  placePanel();
+}
+function hideHint() {
+  if ($('hint').hidden) return;
+  $('hint').hidden = true;
+  document.body.classList.remove('hinting');
+}
 // 上の欄・下の欄（折り返しで高さが変わる）に合わせて、地図のボタン・地図の出典・情報欄を置き直す（重なっていた）
 function placePanel() {
   const narrow = innerWidth < 760;
@@ -1374,6 +1396,8 @@ function placePanel() {
   if (tr) tr.style.top = `${Math.ceil(head.bottom + 6)}px`;
   if (br) br.style.bottom = `${Math.ceil(innerHeight - bar.top + 6)}px`;
   const ctrlBottom = tr ? tr.getBoundingClientRect().bottom : head.bottom;
+  const hint = $('hint');
+  if (hint && !hint.hidden) hint.style.top = `${Math.ceil((narrow ? Math.max(ctrlBottom, head.bottom) : head.bottom) + 8)}px`;
   const p = $('panel').style;
   // 情報欄の下端は、下の欄と地図の出典の表示のうち上にある方の上で止める
   const at = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect();
@@ -1398,6 +1422,9 @@ map.on('load', () => {
   if (MOBILE) attrib?.classList.remove('maplibregl-compact-show');
   if (attrib) new ResizeObserver(placePanel).observe(attrib); // 出典を開いたり畳んだりしたら置き直す
   placePanel();
+  showHint();
+  map.once('dragstart', hideHint);
+  map.once('zoomstart', (e) => { if (e.originalEvent) hideHint(); });
 });
 
 // ---------- 検索 ----------
