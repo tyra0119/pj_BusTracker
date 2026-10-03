@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="17270ce-2211">
+<meta charset="utf-8"><meta name="build" content="bc3342e-dirty-2233">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス軌跡マップ</title>
 <meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=17270ce-2211">
+<link rel="stylesheet" href="./style.css?v=bc3342e-dirty-2233">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -23,6 +23,7 @@
     <div class="load" id="load">データを読み込んでいます…</div>
   </div>
   <div class="chips" id="chips" role="group" aria-label="表示する乗り物"></div>
+  <div class="chips" id="lineChips" role="group" aria-label="線と点の表示"></div>
   <div class="search">
     <input id="q" type="search" placeholder="系統・事業者・停留所を探す" autocomplete="off" aria-label="系統・事業者・停留所を探す">
     <ul id="qres" hidden></ul>
@@ -41,13 +42,6 @@
         <option value="1200">長い（20分）</option>
         <option value="1800">とても長い（30分）</option>
         <option value="3600">1時間</option>
-      </select>
-    </label>
-    <label>路線の線
-      <select id="routeMode">
-        <option value="auto" selected>拡大したら出す</option>
-        <option value="on">いつも出す</option>
-        <option value="off">出さない</option>
       </select>
     </label>
     <label>地図
@@ -100,8 +94,9 @@
   <ul class="help">
     <li>光る点がバス・列車、後ろに伸びて徐々に消えていく尾が、通ってきた軌跡（残像）です。公開されている<b>時刻表どおり</b>に走らせた位置で、遅れや運休は入っていません。</li>
     <li>下のつまみで時刻を動かせます。<b>×10〜×1200</b> で早送り、<b>いま</b> で現在の時刻に戻ります。帯のグラフは、その時刻に走っているバスの数です。</li>
-    <li>地図はドラッグで移動、ホイールやピンチで拡大できます。拡大すると路線の線と停留所が出ます。</li>
-    <li><b>路線の線・バス・停留所を押すと、その系統を選べます。</b>ほかの系統は暗くなり、その系統のバスだけが光ります。停留所を押すと、そこを通る系統の一覧から選べます。</li>
+    <li>地図はドラッグで移動、ホイールやピンチで拡大できます。</li>
+    <li>札の<b>線路</b>（全国の線路）・<b>バス路線</b>（バス停を結んだ線）・<b>停留所・駅</b>で、背景の線と点を出したり消したりできます。停留所は拡大すると出ます。灰色の小さな点は、時刻表のデータがまだ無いバス停（国土数値情報）です。</li>
+    <li><b>バス路線の線・バス・列車・停留所・駅を押すと、その系統・路線を選べます。</b>ほかの系統は暗くなり、その系統のバスだけが光ります。停留所を押すと、そこを通る系統の一覧から選べます。</li>
     <li>上の札（<b>路線バス・高速バス・鉄道・デマンド</b>）を押すと、表示を切り替えられます。数はいま走っている台数（デマンドは受付中の区域の数）です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</li>
     <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
     <li>右上のボタン: 拡大・縮小・方角（北を上に戻す。右ドラッグや 2 本指で回せます）・現在地・全体表示。</li>
@@ -112,6 +107,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=17270ce-2211"></script>
+<script type="module" src="./app.mjs?v=bc3342e-dirty-2233"></script>
 </body>
 </html>

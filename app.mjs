@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=17270ce-2211';
-import { holidayName } from './holidays.mjs?v=17270ce-2211';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bc3342e-dirty-2233';
+import { holidayName } from './holidays.mjs?v=bc3342e-dirty-2233';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -66,7 +66,14 @@ let index = null;
 const feeds = [];          // i -> Feed
 const clock = { day: 0, t: 0, speed: 1, playing: true, live: true };
 let trailLen = 600;
-let routeMode = 'auto';
+// 線と点の表示（上の札）: 線路（全国の線路 N02）・バス路線（バス停を結んだ線）・停留所と駅（全国のバス停 P11 を含む）
+const LINES = [
+  { key: 'track', label: '線路' },
+  { key: 'busline', label: 'バス路線' },
+  { key: 'stops', label: '停留所・駅' },
+];
+const lineOn = { track: true, busline: false, stops: true };
+try { Object.assign(lineOn, JSON.parse(localStorage.getItem('bt.lines')) ?? {}); } catch { /* 使えなくてもよい */ }
 // 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通（上の札で切り替える）
 const MODES = [
   { key: 'bus', label: '路線バス', unit: '台', color: [255, 196, 0] },
@@ -94,7 +101,7 @@ function goNow() {
 
 // ---------- データ読み込み ----------
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610031304');
+  const res = await fetch('./data/index.json?v=202610031330');
   index = await res.json();
   const list = index.feeds;
   // 見ている範囲に近いものから読む
@@ -107,7 +114,7 @@ async function loadAll() {
     while (queue.length) {
       const m = queue.shift();
       try {
-        const r = await fetch(`./data/f/${m.i}.json?v=202610031304`);
+        const r = await fetch(`./data/f/${m.i}.json?v=202610031330`);
         const raw = await r.json();
         const f = new Feed(m, raw);
         feeds[m.i] = f;
@@ -234,41 +241,108 @@ map.on('moveend', () => {
 
 // ---------- 路線の線・停留所（見ている範囲の分だけ） ----------
 let routesLayerDirty = true;
-let routeLines = [];   // { path, c, f, r }
-let stopPts = [];      // { p, f, s }
-function routeLinesVisible() {
-  if (routeMode === 'off') return false;
-  return routeMode === 'on' || map.getZoom() >= 13;
+let busLines = [];     // { path, f, r }（バス停を結んだ線。読み込んだ全フィード）
+let busLinesKey = '';
+let stopPts = [];      // { p, f, s }（時刻表のある停留所・駅。見ている範囲）
+let p11Pts = [];       // { p, name, op }（全国のバス停。見ている範囲）
+/** バス路線の線: 全フィードの系統パターンの形状（同じ形は 1 本）。読み込みや表示の切り替えのときだけ作り直す */
+function buildBusLines() {
+  const key = `${feeds.filter(Boolean).length}|${modeOn[0]}|${modeOn[1]}`;
+  if (key === busLinesKey) return;
+  busLinesKey = key;
+  busLines = [];
+  for (const feed of feeds) {
+    if (!feed) continue;
+    const seen = new Set();
+    for (const p of feed.pats) {
+      const m = feed.routes[p.r].mode;
+      if (m > 1 || !modeOn[m] || seen.has(p.g)) continue;
+      seen.add(p.g);
+      const sh = feed.shape(p.g);
+      const path = new Float64Array(sh.lat.length * 2);
+      for (let v = 0; v < sh.lat.length; v++) { path[v * 2] = sh.lon[v]; path[v * 2 + 1] = sh.lat[v]; }
+      busLines.push({ path, f: feed.i, r: p.r });
+    }
+  }
 }
 function buildRouteLines() {
   routesLayerDirty = false;
-  routeLines = []; stopPts = [];
+  stopPts = []; p11Pts = [];
   const z = map.getZoom();
-  const show = routeLinesVisible();
-  if (!show && z < 13) return;
+  if (!lineOn.stops || z < 13) return;
   const bounds = viewBounds(0.3);
   for (const feed of feeds) {
-    if (!feed || (z >= 7 && !boxHit(feed.meta.bbox, bounds))) continue;
-    if (show) {
-      const seen = new Set();
-      for (const p of feed.pats) {
-        const k = `${p.r}|${p.g}`;
-        if (seen.has(k) || !modeOn[feed.routes[p.r].mode]) continue;
-        seen.add(k);
-        const sh = feed.shape(p.g);
-        const path = new Float64Array(sh.lat.length * 2);
-        for (let v = 0; v < sh.lat.length; v++) { path[v * 2] = sh.lon[v]; path[v * 2 + 1] = sh.lat[v]; }
-        routeLines.push({ path, c: feed.routes[p.r].rgb, f: feed.i, r: p.r });
-      }
+    if (!feed || !boxHit(feed.meta.bbox, bounds)) continue;
+    for (let s = 0; s < feed.stopLat.length; s++) {
+      const lon = feed.stopLon[s], lat = feed.stopLat[s];
+      if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) continue;
+      stopPts.push({ p: [lon, lat], f: feed.i, s });
     }
-    if (z >= 13) {
-      for (let s = 0; s < feed.stopLat.length; s++) {
-        const lon = feed.stopLon[s], lat = feed.stopLat[s];
+  }
+  // 全国のバス停（国土数値情報 P11）。0.5 度の格子を見ている範囲だけ読む
+  for (let y = Math.floor(bounds[1] * 2); y <= Math.floor(bounds[3] * 2); y++) {
+    for (let x = Math.floor(bounds[0] * 2); x <= Math.floor(bounds[2] * 2); x++) {
+      const c = p11Cell(`${y}_${x}`);
+      if (!c) continue;
+      for (let i = 0; i < c.lat.length; i++) {
+        const lon = c.lon[i], lat = c.lat[i];
         if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) continue;
-        stopPts.push({ p: [lon, lat], f: feed.i, s });
+        p11Pts.push({ p: [lon, lat], name: c.names[i], op: c.ops[c.op[i]] });
       }
     }
   }
+}
+const p11Cells = new Map();
+let p11Index = null;
+function p11Cell(k) {
+  if (!p11Index || !p11Index.has(k)) return null;
+  const c = p11Cells.get(k);
+  if (c && c !== 'loading') return c;
+  if (!c) {
+    p11Cells.set(k, 'loading');
+    fetch(`./data/p11/${k}.json`).then((r) => r.json()).then((d) => {
+      const pts = decodePoly(d.pts);
+      p11Cells.set(k, { lat: pts.lat, lon: pts.lon, names: d.names, ops: d.ops, op: d.op });
+      routesLayerDirty = true;
+    }).catch(() => p11Cells.delete(k));
+  }
+  return null;
+}
+// 線路（国土数値情報 N02）
+let trackLines = [];
+let trackMeta = [];
+async function loadStatic() {
+  try {
+    const r = await fetch('./data/rail-lines.json');
+    const d = await r.json();
+    trackMeta = d.lines.map(([name, op, kind]) => ({ name, op, kind }));
+    d.lines.forEach(([, , kind, segs], li) => {
+      for (const sgm of segs) {
+        const pts = decodePoly(sgm);
+        const path = new Float64Array(pts.lat.length * 2);
+        for (let v = 0; v < pts.lat.length; v++) { path[v * 2] = pts.lon[v]; path[v * 2 + 1] = pts.lat[v]; }
+        trackLines.push({ path, li, kind });
+      }
+    });
+  } catch (e) { console.warn('rail-lines', e); }
+  try {
+    const r = await fetch('./data/p11-index.json');
+    p11Index = new Set((await r.json()).cells);
+    routesLayerDirty = true;
+  } catch (e) { console.warn('p11', e); }
+}
+function decodePoly(str) {
+  const lat = [], lon = [];
+  let i = 0, a = 0, b = 0;
+  while (i < str.length) {
+    for (let k = 0; k < 2; k++) {
+      let shift = 0, result = 0, c;
+      do { c = str.charCodeAt(i++) - 63; result |= (c & 0x1f) << shift; shift += 5; } while (c >= 0x20);
+      const d = result & 1 ? ~(result >> 1) : result >> 1;
+      if (k === 0) { a += d; lat.push(a / 1e5); } else { b += d; lon.push(b / 1e5); }
+    }
+  }
+  return { lat, lon };
 }
 
 // ---------- 選んだ系統 ----------
@@ -320,6 +394,8 @@ function fitRoute() {
   const narrow = innerWidth < 760;
   map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: narrow ? { top: 120, bottom: 360, left: 30, right: 30 } : { top: 100, bottom: 160, left: 60, right: 420 }, maxZoom: 15, duration: 900 });
 }
+// 乗り物ごとの言葉（鉄道は 列車・駅・本、ほかは バス・停留所・台）
+const words = (rt) => (rt?.mode === 2 ? { v: '列車', stop: '駅', unit: '本', line: '路線' } : { v: 'バス', stop: '停留所', unit: '台', line: '系統' });
 const routeName = (rt) => rt.short || rt.long || '（系統名なし）';
 const agencyName = (feed, rt) => (feed.agencies[rt.ai]?.[0] || feed.meta.agencies?.[0] || feed.meta.org || feed.meta.name);
 
@@ -373,8 +449,10 @@ function stopSection() {
   }
   const routes = [...byRoute.entries()].sort((a, b) => b[1].n - a[1].n);
   let h = `<h2>${esc(name)}</h2><p class="op">${esc(feed.meta.name)}</p>`;
-  if (!routes.length) return h + '<p class="note">この日にこの停留所を出るバスはありません。</p>';
-  h += '<h3>この停留所を通る系統（押すと選べます）</h3><div class="rt-pick">';
+  const isRail = routes.length && routes.every(([r]) => feed.routes[r].mode === 2);
+  const W = isRail ? words({ mode: 2 }) : words(null);
+  if (!routes.length) return h + '<p class="note">この日にここを出るバス・列車はありません。</p>';
+  h += `<h3>この${W.stop}を通る${W.line}（押すと選べます）</h3><div class="rt-pick">`;
   for (const [r, e] of routes) {
     const rt = feed.routes[r];
     h += `<button type="button" data-route="${selStop.f}:${r}" aria-pressed="${!!sel && sel.f === selStop.f && sel.r === r}"><i class="sw" style="background:${rgbCss(rt.rgb)}"></i>${esc(routeName(rt))}<small>${e.n}便</small></button>`;
@@ -392,10 +470,13 @@ function routeSection() {
   const sub = schedule.substitutes.get(sel.f);
   let h = `<h2><i class="sw" style="background:${rgbCss(rt.rgb)}"></i>${esc(routeName(rt))}${rt.mode ? `<span class="badge m${rt.mode}">${MODES[rt.mode].label}</span>` : ''}</h2>`;
   h += `<p class="op">${esc(agencyName(feed, rt))}${rt.long && rt.short ? `　${esc(rt.long)}` : ''}${sub != null ? `<span class="badge" title="時刻表の期間外なので ${dateKeyOf(sub)} のダイヤで走らせています">代わりのダイヤ</span>` : ''}</p>`;
-  h += `<dl class="kv"><dt>この日の便</dt><dd>${fmt(trips.length)} 便</dd><dt>いま走行中</dt><dd>${fmt(running)} 台</dd>`;
-  if (trips.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...trips.map((x) => x.start)))} 〜 ${hhmm(Math.max(...trips.map((x) => x.start)))} 発</dd>`;
+  const W = words(rt);
+  h += `<dl class="kv"><dt>この日の便</dt><dd>${fmt(trips.length)} ${rt.mode === 2 ? '本' : '便'}</dd><dt>いま走行中</dt><dd>${fmt(running)} ${W.unit}</dd>`;
+  // 前日の深夜便（−24 時間して入れている）は除いて、この日の始発・最終
+  const own = trips.filter((x) => x.start >= 0).map((x) => x.start);
+  if (own.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...own))} 〜 ${hhmm(Math.max(...own))} 発</dd>`;
   h += '</dl>';
-  h += `<div class="act"><button type="button" data-act="fit">この系統に寄る</button>${selTrip ? `<button type="button" data-act="follow" aria-pressed="${follow}">このバスを追う</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
+  h += `<div class="act"><button type="button" data-act="fit">この${W.line}に寄る</button>${selTrip ? `<button type="button" data-act="follow" aria-pressed="${follow}">この${W.v}を追う</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
   if (selTrip) h += tripSection();
   // 行先ごとの便数
   const byHead = new Map();
@@ -415,7 +496,7 @@ function tripSection() {
   const { feed, pat, prof, start, end } = schedule.tripInfo(j);
   const t = clock.t;
   const state = t < start ? `${hhmm(start)} 発（まだ出ていません）` : t > end ? `${hhmm(end)} に到着しました` : '走行中';
-  let h = `<h3>このバス　${esc(pat.h)} 行 <span style="font-weight:400">— ${state}</span></h3><ol class="stops" style="--rc:${rgbCss(feed.routes[pat.r].rgb)}">`;
+  let h = `<h3>この${words(feed.routes[pat.r]).v}　${esc(pat.h)} 行 <span style="font-weight:400">— ${state}</span></h3><ol class="stops" style="--rc:${rgbCss(feed.routes[pat.r].rgb)}">`;
   let nextShown = false;
   for (let q = 0; q < pat.s.length; q++) {
     const tm = start + (q === 0 ? prof.dep[0] : prof.arr[q]);
@@ -462,13 +543,20 @@ function describe(info) {
     const feed = feeds[info.object.f], rt = feed.routes[info.object.r];
     return `<b>${esc(routeName(rt))}</b><span>${esc(agencyName(feed, rt))}　押すと選べます</span>`;
   }
+  if (info.layer.id === 'tracks' && info.object) {
+    const m = trackMeta[info.object.li];
+    return `<b>${esc(m.name)}</b><span>${esc(m.op)}　線路（国土数値情報）</span>`;
+  }
+  if (info.layer.id === 'p11' && info.object) {
+    return `<b>${esc(info.object.name)}</b><span>${esc(info.object.op)}　バス停（国土数値情報 P11）。時刻表のデータはまだありません</span>`;
+  }
   if (info.layer.id === 'areas' && info.object) {
     const d = info.object, feed = feeds[d.f], rt = feed.routes[d.r];
     return `<b>デマンド交通　${esc(areaName(feed, rt))}</b><span>${d.on ? '受付中の時間帯' : '時間外'}　${d.wins.map(([a, b]) => `${hhmm(a)}〜${hhmm(b)}`).join('、')}</span>`;
   }
   if ((info.layer.id === 'stops' || info.layer.id === 'selStops') && info.object) {
     const o = info.object, feed = feeds[o.f ?? sel?.f];
-    return `<b>${esc(feed.stopNames[o.s])}</b><span>停留所　押すと通る系統が出ます</span>`;
+    return `<b>${esc(feed.stopNames[o.s])}</b><span>停留所・駅　押すと通る系統・路線が出ます</span>`;
   }
   return null;
 }
@@ -516,23 +604,42 @@ function layers() {
   const z = map.getZoom();
   const out = [];
   const dim = !!sel;
-  const showLines = routeLinesVisible();
   if (routesLayerDirty) buildRouteLines();
-  if (showLines && routeLines.length) {
-    // 路線の線は背景に徹する（色を付けると、動く軌跡が線に埋もれる）。ホバーで白く光り、押すと系統を選ぶ
+  const dark = theme === 'dark';
+  if (lineOn.track && trackLines.length) {
+    // 線路は背景。新幹線は少し明るく
     out.push(new PathLayer({
-      id: 'routes',
-      data: routeLines,
+      id: 'tracks',
+      data: trackLines,
       getPath: (d) => d.path,
       positionFormat: 'XY',
-      getColor: theme === 'dark' ? [190, 205, 220, dim ? 12 : z >= 15 ? 34 : 22] : [40, 60, 80, dim ? 16 : z >= 15 ? 50 : 34],
-      getWidth: z >= 14 ? 2.5 : 1.5,
+      getColor: (d) => (dark ? (d.kind === 1 ? [150, 200, 255, 120] : [150, 175, 165, 90]) : (d.kind === 1 ? [40, 90, 170, 150] : [70, 90, 85, 110])),
+      getWidth: (d) => (d.kind === 1 ? 1.6 : 1.2) * (z >= 13 ? 1.6 : z >= 10 ? 1.2 : 1),
       widthUnits: 'pixels',
-      widthMinPixels: 1,
-      pickable: true,
+      widthMinPixels: 0.8,
+      opacity: dim ? 0.4 : 1,
+      pickable: z >= 9,
       autoHighlight: true,
-      highlightColor: theme === 'dark' ? [255, 255, 255, 200] : [0, 90, 150, 220],
-      updateTriggers: { getColor: [dim, z >= 15, theme] },
+      highlightColor: dark ? [220, 255, 230, 200] : [0, 90, 60, 200],
+      updateTriggers: { getColor: [dark], getWidth: [z >= 13, z >= 10] },
+    }));
+  }
+  if (lineOn.busline) {
+    buildBusLines();
+    // バス停を結んだ線。押すと系統を選ぶ（odpt の地図と同じく、ホバーで白く光る）
+    out.push(new PathLayer({
+      id: 'routes',
+      data: busLines,
+      getPath: (d) => d.path,
+      positionFormat: 'XY',
+      getColor: dark ? [255, 214, 120, dim ? 14 : z >= 13 ? 60 : z >= 9 ? 42 : 30] : [150, 90, 0, dim ? 18 : z >= 13 ? 90 : 55],
+      getWidth: z >= 14 ? 2.2 : z >= 10 ? 1.4 : 1,
+      widthUnits: 'pixels',
+      widthMinPixels: 0.6,
+      pickable: z >= 9,
+      autoHighlight: true,
+      highlightColor: dark ? [255, 255, 255, 220] : [0, 90, 150, 220],
+      updateTriggers: { getColor: [dim, z >= 13, z >= 9, dark] },
     }));
   }
   if (selGeom) {
@@ -591,7 +698,14 @@ function layers() {
       updateTriggers: { getFillColor: [pulse.toFixed(2), activeAreas.length], getLineColor: [activeAreas.length], getLineWidth: [activeAreas.length] },
     }));
   }
-  if (stopPts.length && z >= 13) {
+  if (lineOn.stops && p11Pts.length && z >= 13) {
+    // 全国のバス停（時刻表のデータが無いものも）。小さく淡く
+    out.push(new ScatterplotLayer({
+      id: 'p11', data: p11Pts, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 2.2,
+      getFillColor: dark ? [120, 130, 140, 110] : [130, 140, 150, 140], stroked: false, pickable: true,
+    }));
+  }
+  if (lineOn.stops && stopPts.length && z >= 13) {
     out.push(new ScatterplotLayer({
       id: 'stops', data: stopPts, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 3.2,
       getFillColor: theme === 'dark' ? [20, 26, 34] : [255, 255, 255], stroked: true, getLineColor: theme === 'dark' ? [200, 210, 220] : [60, 70, 80], lineWidthUnits: 'pixels', getLineWidth: 1.2, pickable: true,
@@ -724,7 +838,6 @@ addEventListener('keydown', (e) => {
 // 表示の設定
 $('btnSettings').onclick = () => { const p = $('settings'); p.hidden = !p.hidden; $('btnSettings').setAttribute('aria-expanded', String(!p.hidden)); };
 $('trailLen').onchange = (e) => { trailLen = +e.target.value; trails.dirty = true; };
-$('routeMode').onchange = (e) => { routeMode = e.target.value; routesLayerDirty = true; };
 // 乗り物の札（数を出しつつ、押すと表示を切り替える）
 function renderChips() {
   const el = $('chips');
@@ -738,6 +851,18 @@ function renderChips() {
       b.setAttribute('aria-pressed', String(modeOn[i]));
       try { localStorage.setItem('bt.modes', JSON.stringify(modeOn)); } catch { /* 使えなくてもよい */ }
       trails.dirty = true; routesLayerDirty = true;
+    };
+  }
+  if (!$('lineChips').children.length) {
+    $('lineChips').innerHTML = LINES.map((l) => `<button type="button" class="line" data-l="${l.key}" aria-pressed="${!!lineOn[l.key]}"><i class="ln ln-${l.key}"></i>${l.label}</button>`).join('');
+    $('lineChips').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const k = b.dataset.l;
+      lineOn[k] = !lineOn[k];
+      b.setAttribute('aria-pressed', String(lineOn[k]));
+      try { localStorage.setItem('bt.lines', JSON.stringify(lineOn)); } catch { /* 使えなくてもよい */ }
+      routesLayerDirty = true;
     };
   }
   const counts = [nMode[0], nMode[1], nMode[2], activeAreas.length];
@@ -771,6 +896,15 @@ function drawHist() {
   }
 }
 addEventListener('resize', drawHist);
+// 情報欄は上の欄（折り返すと高さが変わる）のすぐ下から
+function placePanel() {
+  const narrow = innerWidth < 760;
+  const top = narrow ? null : Math.ceil($('head').getBoundingClientRect().bottom + 8);
+  $('panel').style.top = top ? `${top}px` : '';
+  $('panel').style.maxHeight = top ? `calc(100vh - ${top}px - 150px)` : '';
+}
+addEventListener('resize', placePanel);
+new ResizeObserver(placePanel).observe($('head'));
 
 // ---------- 検索 ----------
 let qItems = [];
@@ -851,6 +985,7 @@ map.on('load', () => {
   goNow();
   syncControls();
   requestAnimationFrame(frame);
+  loadStatic();
   loadAll().catch((e) => { $('load').textContent = 'データを読み込めませんでした'; console.error(e); });
 });
 // 確認用（開発者ツールから状態を見る）
