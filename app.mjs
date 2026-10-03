@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2e3e640-0719';
-import { holidayName } from './holidays.mjs?v=2e3e640-0719';
-import { Realtime } from './realtime.mjs?v=2e3e640-0719';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b4f031f-dirty-0807';
+import { holidayName } from './holidays.mjs?v=b4f031f-dirty-0807';
+import { Realtime } from './realtime.mjs?v=b4f031f-dirty-0807';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=2e3e640-0719', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=b4f031f-dirty-0807', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1222,7 +1222,7 @@ function frameBody(now) {
       rtTick = now; updateRealtime();
       if (panelArea?.rt && rtPanel && now - rtPanelAt > 5000) { const d = rtData.find((x) => x.key === rtPanel.key); if (d) showRtVehicle(d, true); }
     }
-    $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] && i < 3 ? x : 0), 0));
+    $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] ? x : 0), 0)); // 画面の中の数と同じく、表示中の乗り物すべて（デマンド交通の車両も）
     renderChips();
     if (selTrip || selStop || sel) {
       panelTimer++;

@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="2e3e640-0719">
+<meta charset="utf-8"><meta name="build" content="b4f031f-dirty-0807">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス・鉄道軌跡マップ</title>
 <meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=2e3e640-0719">
+<link rel="stylesheet" href="./style.css?v=b4f031f-dirty-0807">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -107,10 +107,11 @@
     <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
     <li>時刻表の期間が切れている事業者は、同じ曜日（土休日）の最後のダイヤで代わりに走らせ、「代わりのダイヤ」と表示します。</li>
     <li>データ: GTFS-JP（gtfs-data.jp・公共交通オープンデータセンター）と、GTFS を公開していない事業者は時刻表から組み直したもの（非公式）。一覧は「出典」に。</li>
+    <li>詳しい使い方は<a href="./manual.html" target="_blank" rel="noopener">マニュアル</a>に（画像つき）。</li>
   </ul>
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=2e3e640-0719"></script>
+<script type="module" src="./app.mjs?v=b4f031f-dirty-0807"></script>
 </body>
 </html>

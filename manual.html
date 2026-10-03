@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>使い方 — 全国バス・鉄道軌跡マップ</title>
+<meta name="description" content="全国バス・鉄道軌跡マップのマニュアル。画面の見方、時刻と早送り、系統・便の選び方、実際の位置、データの無い路線の理由、データの出典。">
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #10151c; --line: rgba(255, 255, 255, 0.12);
+    --text: #e8edf2; --muted: #93a1b0; --accent: #38d6ff; --accent2: #ffc400;
+    --bus: #ffc400; --hw: #38d6ff; --rail: #78ffa0; --demand: #ff8c46;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: 64px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif; font-size: 16px; line-height: 1.8; }
+  a { color: var(--accent); }
+  header.top { position: sticky; top: 0; z-index: 2; background: rgba(11, 15, 20, 0.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+  header.top .in { max-width: 920px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+  header.top b { font-size: 16px; }
+  header.top a.app { margin-left: auto; background: var(--accent); color: #001018; text-decoration: none; font-weight: 700; border-radius: 8px; padding: 6px 12px; font-size: 14px; white-space: nowrap; }
+  main { max-width: 920px; margin: 0 auto; padding: 8px 16px 64px; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 28px 0 6px; }
+  .lead { color: var(--muted); margin: 0 0 18px; }
+  nav.toc { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 18px 0 8px; }
+  nav.toc ol { margin: 0; padding-left: 1.4em; columns: 2; column-gap: 28px; }
+  nav.toc li { break-inside: avoid; }
+  nav.toc a { color: var(--text); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  h2 { font-size: 22px; margin: 44px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; }
+  h2 .n { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 16px; }
+  h3 { font-size: 17px; margin: 22px 0 6px; color: var(--accent2); }
+  p { margin: 8px 0; }
+  ul, ol { padding-left: 1.3em; margin: 8px 0; }
+  li { margin: 4px 0; }
+  figure { margin: 14px 0 18px; }
+  figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); background: #000; }
+  figure.phone { max-width: 300px; }
+  figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .row { display: flex; gap: 20px; align-items: flex-start; }
+  .row > * { flex: 1; min-width: 0; }
+  kbd { font-family: inherit; font-size: 13px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 0 10px; font-size: 14px; white-space: nowrap; background: rgba(255, 255, 255, 0.04); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: 0; }
+  .sq { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 10px 0; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .note { background: rgba(255, 196, 0, 0.08); border: 1px solid rgba(255, 196, 0, 0.35); border-radius: 10px; padding: 10px 14px; margin: 12px 0; }
+  .muted { color: var(--muted); }
+  footer { max-width: 920px; margin: 0 auto; padding: 18px 16px 40px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+  @media (max-width: 640px) {
+    body { font-size: 15px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 19px; }
+    nav.toc ol { columns: 1; }
+    .row { flex-direction: column; }
+    figure.phone { max-width: 240px; margin-left: auto; margin-right: auto; }
+    table { font-size: 13px; }
+    th, td { padding: 6px 4px; }
+  }
+</style>
+</head>
+<body>
+<header class="top"><div class="in"><b>全国バス・鉄道軌跡マップ　使い方</b><a class="app" href="./">地図を開く</a></div></header>
+<main>
+  <h1>全国バス・鉄道軌跡マップ<br>マニュアル</h1>
+  <p class="lead">日本全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせ、その動きを光の軌跡で見せる Web アプリです。スマートフォンでもパソコンでも、ブラウザだけで動きます（インストール・登録は不要です）。</p>
+
+  <nav class="toc" aria-label="目次">
+    <ol>
+      <li><a href="#about">このアプリについて</a></li>
+      <li><a href="#screen">画面の見方</a></li>
+      <li><a href="#time">時刻と早送り</a></li>
+      <li><a href="#modes">乗り物の切り替え</a></li>
+      <li><a href="#select">系統・便・停留所・駅を選ぶ</a></li>
+      <li><a href="#follow">追いかける</a></li>
+      <li><a href="#realtime">実際の位置</a></li>
+      <li><a href="#lines">線路・バス路線・停留所と駅</a></li>
+      <li><a href="#nodata">データの無い路線の理由</a></li>
+      <li><a href="#mobile">スマホで使うとき</a></li>
+      <li><a href="#sources">データの出典とライセンス</a></li>
+      <li><a href="#caution">注意</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="about"><span class="n">1</span>このアプリについて</h2>
+  <p>全国の事業者・自治体が公開している公共交通の時刻表データ（GTFS-JP など）を一つの地図に集め、<b>約 74 万便</b>（20 種類の入手先・850 事業者・955 のデータ）を時刻表どおりに走らせています。路線バス・高速バス・鉄道・デマンド交通を同じ地図で見られます。</p>
+  <ul>
+    <li>時刻を動かしたり早送りしたりして、朝のラッシュに都市へ集まり、夜に郊外へ散っていく公共交通の一日を見られます。</li>
+    <li>バスや列車を押すと、系統・行先・停車駅と時刻が分かり、その便を地図が追いかけます。</li>
+    <li>車両が配信している「いまの位置」（GTFS リアルタイム）を重ねて、時刻表との差（遅れ）を見られます。</li>
+    <li>時刻表が公開されていない地域は列車・バスが走りません。全国の駅・線路・バス停を出し、走らない理由も示します。</li>
+  </ul>
+  <figure><img src="manual/japan.jpg" alt="日本全体の地図に、朝 8 時のバス・鉄道が光の点と軌跡で表示されている" loading="lazy" width="1200" height="750"><figcaption>全国の一日（平日の朝 8 時、×300 で再生中）</figcaption></figure>
+
+  <h2 id="screen"><span class="n">2</span>画面の見方</h2>
+  <p>光る点がバス・列車、後ろに伸びて徐々に消えていく尾が、通ってきた軌跡（残像）です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</p>
+  <figure><img src="manual/city.jpg" alt="東京の都心部の地図に、多数のバス・鉄道が色とりどりの点と軌跡で表示されている。上に札と検索欄、下に時刻のつまみ" loading="lazy" width="1200" height="750"><figcaption>東京の朝のラッシュ。上の欄・下の欄・右の地図のボタン</figcaption></figure>
+  <table>
+    <tr><th>上の欄</th><td>アプリ名、<b>画面の中で走っている台数</b>（かっこ内は読み込んだ全体）、乗り物の札（<a href="#modes">4</a>）、<span class="chip">実際の位置</span>（<a href="#realtime">7</a>）、<span class="chip">線路</span><span class="chip">バス路線</span><span class="chip">停留所・駅</span>（<a href="#lines">8</a>）、検索欄、<span class="chip">表示</span><span class="chip">出典</span><span class="chip">使い方</span></td></tr>
+    <tr><th>右の地図のボタン</th><td>拡大・縮小、方角（押すと北を上に戻す）、現在地、全体表示（日本全体に戻る）</td></tr>
+    <tr><th>右の情報欄</th><td>押した系統・便・停留所・駅・車両の詳しい情報（<a href="#select">5</a>）</td></tr>
+    <tr><th>下の欄</th><td>再生・一時停止、日付と曜日の区分（平日・土・日祝）、時刻、速さ（×1〜×1200）、<span class="chip">いま</span>、時刻のつまみ。つまみの下の帯は、その時刻に走っている台数のグラフです</td></tr>
+  </table>
+  <p>地図はドラッグで移動、ホイールやピンチで拡大・縮小できます。右ドラッグや 2 本指で回転もできます。</p>
+  <p><span class="chip">表示</span> では、<b>軌跡の長さ</b>（なし・3 分・10 分・20 分・30 分・1 時間）と、<b>地図の明暗</b>（暗い・明るい）を選べます。</p>
+
+  <h2 id="time"><span class="n">3</span>時刻と早送り</h2>
+  <ul>
+    <li>開いたときは<b>いまの時刻</b>で動いています（下の欄に「● いま」）。</li>
+    <li>下の<b>つまみ</b>を動かすと、その日の 0〜24 時の好きな時刻にできます。</li>
+    <li><b>×10・×60・×300・×1200</b> で早送り。×300 なら 1 時間が 12 秒、×1200 なら 1 日が約 72 秒です。早送りすると尾が長く伸びます。</li>
+    <li>日付を変えると、その日のダイヤ（平日・土曜・日曜祝日）で走ります。祝日も見分けます。</li>
+    <li><span class="chip">いま</span> で現在の日時と ×1 に戻ります。</li>
+  </ul>
+  <h3>キーボード（パソコン）</h3>
+  <ul>
+    <li><kbd>Space</kbd> 再生・一時停止</li>
+    <li><kbd>←</kbd> <kbd>→</kbd> 10 分戻す・進める（<kbd>Shift</kbd> を押しながらで 1 時間）</li>
+    <li><kbd>Esc</kbd> 選択を外す</li>
+  </ul>
+
+  <h2 id="modes"><span class="n">4</span>乗り物の切り替え</h2>
+  <p>上の札を押すと、その乗り物を出したり消したりできます。札の数は、画面の中でいま走っている台数です。</p>
+  <table>
+    <tr><th><span class="dot" style="background:var(--bus)"></span> 路線バス</th><td>一般の路線バス・コミュニティバス</td></tr>
+    <tr><th><span class="dot" style="background:var(--hw)"></span> 高速バス</th><td>高速バス・空港リムジンなど（大きめの点・太い軌跡）</td></tr>
+    <tr><th><span class="dot" style="background:var(--rail)"></span> 鉄道</th><td>JR・私鉄・地下鉄・路面電車など（約 10 万便）</td></tr>
+    <tr><th><span class="dot" style="background:var(--demand)"></span> デマンド</th><td>予約して乗るデマンド交通。決まった経路が無いので、<b>乗れる区域</b>を、予約を受け付けている時間帯に光らせます。数は受付中の区域の数です</td></tr>
+  </table>
+  <p class="muted">点と軌跡の色は、各事業者がデータで決めている系統・路線の色です（色の無いものや暗すぎる色は、アプリで補っています）。</p>
+
+  <h2 id="select"><span class="n">5</span>系統・便・停留所・駅を選ぶ</h2>
+  <div class="row">
+    <div>
+      <ul>
+        <li><b>バス・列車を押す</b>と、その系統（路線）が選ばれ、ほかは暗くなります。右の情報欄に、系統名・事業者、この日の便の数、いま走っている台数、始発・最終、<b>押した便の停車駅と時刻</b>（いまの位置に印）、行先ごとの本数が出ます。</li>
+        <li><b>バス路線の線</b>（<a href="#lines">8</a>）を押しても、その系統を選べます。</li>
+        <li><b>停留所・駅を押す</b>と、そこを通る系統・路線の一覧が出て、押すと選べます。</li>
+        <li>情報欄のボタン: <span class="chip">この系統に寄る</span>（系統全体が入るように地図を動かす）、<span class="chip">このバスを追う</span>（<a href="#follow">6</a>）、<span class="chip">閉じる</span>。</li>
+        <li>地図の何も無い所を押すか <kbd>Esc</kbd> で、選択を外せます。</li>
+        <li>上の<b>検索欄</b>で、系統名・事業者名・停留所名から探せます。</li>
+      </ul>
+    </div>
+  </div>
+  <figure><img src="manual/select.jpg" alt="東京メトロ南北線の列車を押した画面。路線が白い縁で強調され、右の情報欄に停車駅と時刻の一覧が出ている" loading="lazy" width="1200" height="750"><figcaption>列車（東京メトロ南北線）を押したところ。停車駅と時刻、いまの位置（黄色の印）</figcaption></figure>
+
+  <h2 id="follow"><span class="n">6</span>追いかける</h2>
+  <ul>
+    <li>便を選んで <span class="chip">このバスを追う</span>（列車なら「この列車を追う」）を押すと、地図がその便を真ん中に置いたまま動きます。</li>
+    <li>追いかけているあいだも、ホイール・ピンチで拡大・縮小できます（その便を中心に拡大します）。早送りしても追いかけ続けます。</li>
+    <li>地図を手で（1 本指・マウスで）動かすと、追いかけるのをやめます。もう一度ボタンを押すと再開します。</li>
+  </ul>
+
+  <h2 id="realtime"><span class="n">7</span>実際の位置</h2>
+  <p>上の <span class="chip">実際の位置</span> を押すと、走っているバス・列車が配信している<b>いまの本当の位置</b>（GTFS リアルタイム）を、時刻表どおりの位置に重ねて出します。開いたときはオフです。</p>
+  <figure><img src="manual/realtime.jpg" alt="東京の新宿付近。実際の位置の印（丸と角の丸い四角）が遅れの色で表示され、京王線の電車を押した情報欄に「約 3 分遅れ」と出ている" loading="lazy" width="1200" height="750"><figcaption>実際の位置。京王線の電車を押して追いかけているところ（約 3 分遅れ）</figcaption></figure>
+  <ul>
+    <li>印の形: <span class="dot" style="background:#ccc"></span> 丸 = バス、<span class="sq" style="background:#ccc"></span> 角の丸い四角 = 電車（白い縁）。</li>
+    <li>印の色は時刻表との差: <span class="dot" style="background:#50e182"></span> ほぼ時刻表どおり、<span class="dot" style="background:#ffc800"></span> 2〜5 分遅れ、<span class="dot" style="background:#ff5050"></span> 5 分以上遅れ、<span class="dot" style="background:#5aaaff"></span> 早い、<span class="dot" style="background:#c8cdd7"></span> 時刻表の便と結べなかったもの。</li>
+    <li>印から伸びる細い線の先が、同じ便の<b>時刻表どおりの位置</b>です。</li>
+    <li>印を押すと、事業者・系統・行先・遅れ・位置の時刻が出て、地図がその車両を追いかけます。<span class="chip">この系統を見る</span> で時刻表の系統に切り替えられます。</li>
+    <li>位置の配信は 30 秒ごとです。そのあいだは、測った位置から求めた遅れの分だけ時刻表に沿って動かし、次の位置が届いたら直します。</li>
+    <li>実際の位置は<b>「いま」のときだけ</b>出ます。早送りや時刻の移動をすると消え、追いかけていた車両は時刻表どおりの追いかけに切り替わります。</li>
+    <li>いまは公共交通オープンデータセンターの配信（都営バス・関東バス・京王バス・西武バス・横浜市営・川崎市・JR東日本・京王線・東武線など約 40）に対応しています。見ている範囲の配信だけを読みます。</li>
+  </ul>
+
+  <h2 id="lines"><span class="n">8</span>線路・バス路線・停留所と駅</h2>
+  <p>上の札で、背景の線と点を出したり消したりできます（開いたときはすべてオフ）。</p>
+  <table>
+    <tr><th>線路</th><td>全国の鉄道の線路（国土数値情報）。押すと、その路線で列車を走らせているか、走らせていない理由が出ます</td></tr>
+    <tr><th>バス路線</th><td>バス停を結んだバスの通り道。押すとその系統を選べます</td></tr>
+    <tr><th>停留所・駅</th><td>駅（白い点。少し拡大すると出ます）と、バス停（大きく拡大すると出ます）。<b>灰色の小さな点</b>は、時刻表のデータがまだ無いバス停（国土数値情報の全国のバス停 約 27.8 万か所）です</td></tr>
+  </table>
+
+  <h2 id="nodata"><span class="n">9</span>データの無い路線の理由</h2>
+  <p>時刻表のデータが公開されていない、または使えない路線では、列車やバスが走りません。<span class="chip">線路</span> や <span class="chip">停留所・駅</span> をオンにして、<b>線路や駅を押す</b>と、その理由が出ます。</p>
+  <figure><img src="manual/nodata.jpg" alt="大阪の地図。線路と駅を表示し、JR 大阪環状線を押した情報欄に「この路線は、時刻表のデータが無いため列車を走らせていません」と理由・根拠が出ている" loading="lazy" width="1200" height="750"><figcaption>大阪では JR・私鉄の列車が走りません。JR 大阪環状線を押したところ</figcaption></figure>
+  <ul>
+    <li>理由は 3 つに分けています: <b>規約で機械的な利用（取得・加工・二次利用）が禁じられている</b>／<b>利用できるか規約からは判断できない</b>／<b>時刻表の公開が見つからない</b>。</li>
+    <li>調べた会社、<b>根拠</b>（規約の該当箇所）、<b>問い合わせ先</b>、調査日も出します。鉄道 128 社の時刻表の公開状況と利用規約を調べた結果です。</li>
+    <li>駅を押すと、その駅の会社・路線ごとに、列車を走らせているか（走らせていれば路線のボタン）、走らせていなければ理由が出ます。</li>
+    <li>灰色のバス停を押すと、時刻表のデータがまだ無いバス停であることが出ます。</li>
+  </ul>
+
+  <h2 id="mobile"><span class="n">10</span>スマホで使うとき</h2>
+  <div class="row">
+    <div>
+      <ul>
+        <li>スマートフォンでは、全国のデータを一度に読まず、<b>見ている範囲のデータだけ</b>を読みます（上の欄に「見ている範囲 ○ データ」）。地図を動かすと、足りない分を読み、離れた地域は手放します。</li>
+        <li>別の地域へ大きく移動した直後は、読み込みが終わるまで少し待ってください。</li>
+        <li>上の札は横にスクロールできます。地図のボタンは横一列、地図の出典は「i」を押すと出ます。</li>
+        <li>2 本指で拡大・縮小・回転できます。2 本指の操作では追いかけをやめません。</li>
+        <li><b>現在地</b>のボタンで、いる場所の近くのバス・列車を見られます（位置情報の許可が必要です。位置はこの端末の中だけで使います）。</li>
+        <li>データの読み込みに通信を使います。Wi-Fi のある所での利用がおすすめです。</li>
+      </ul>
+    </div>
+    <figure class="phone"><img src="manual/phone.jpg" alt="スマートフォンの画面。東京の地図に多数のバス・鉄道が表示され、下に時刻と速さのボタン" loading="lazy" width="520" height="1126"><figcaption>スマートフォンの画面</figcaption></figure>
+  </div>
+
+  <h2 id="sources"><span class="n">11</span>データの出典とライセンス</h2>
+  <p>アプリの <span class="chip">出典</span> に、使っているすべてのデータの一覧（データ名・入手先・ライセンス・便の数）とデータの作成日を出しています。主な入手先は次のとおりです。</p>
+  <table>
+    <tr><th>GTFSデータリポジトリ<br>（gtfs-data.jp）</th><td>全国の事業者・自治体のバス・鉄道・デマンド交通の GTFS-JP。ライセンスはデータごと（多くは CC BY 4.0）</td></tr>
+    <tr><th>公共交通オープンデータセンター</th><td>バス・鉄道の GTFS-JP、デマンド交通の GTFS-Flex、バス・列車・駅の時刻表（API）、車両位置の GTFS リアルタイム。「出典：公共交通オープンデータセンター」。公共交通オープンデータ基本ライセンスほか（一部は公共交通オープンデータチャレンジ2026 の期間限定の利用許諾）</td></tr>
+    <tr><th>BODIK・自治体のオープンデータ</th><td>名古屋市・長崎県・大分県・鹿児島市・仙台市・札幌市・石川県・沖縄 OTTOP ほか</td></tr>
+    <tr><th>北海道オープンデータプラットフォーム（HODA）</th><td>北海道内のバス事業者・市町村の GTFS-JP。北海道オープンデータ推進協議会、クリエイティブ・コモンズ・ライセンス 表示 2.1 日本（改変して利用）</td></tr>
+    <tr><th>事業者・協会の公開</th><td>広島県バス協会、Bus-Vision、佐賀のバス、富士急バス、ことでん、各地のコミュニティバスほか</td></tr>
+    <tr><th>国土数値情報（国土交通省）</th><td>鉄道データ（N02）: 線路・駅、列車を線路に沿わせる。バス停留所データ（P11）: 全国のバス停。CC BY 4.0</td></tr>
+    <tr><th>OpenStreetMap</th><td>形状の無いバスの系統を道路に沿わせる道路データ（© OpenStreetMap contributors、ODbL）。背景地図は © CARTO、© OpenStreetMap contributors</td></tr>
+  </table>
+  <p><b>オープンデータではないもの</b>（「出典」で区別して表示）: 神姫バス・鹿児島市電・伊予鉄道は、公式サイトの時刻表から組み直したもの（非公式・非商用）です。大阪シティバス・南海バス・山梨交通は、インターネット上で取得できるものの公開の案内が無い配信を使っています。</p>
+  <p class="muted">位置は時刻表をもとにアプリが計算したもので、加工したデータです。データの作成日は「出典」の下にあります。</p>
+
+  <h2 id="caution"><span class="n">12</span>注意</h2>
+  <div class="note">
+    <ul>
+      <li>地図の点は、公開されている<b>時刻表どおりに走った場合の推定位置</b>です。実際の運行とは異なります。<b>遅れ・運休・臨時ダイヤは入っていません。</b>（「実際の位置」をオンにしたときの印だけが、配信されている本当の位置です。）</li>
+      <li>停留所の間の位置は、時刻表の時刻と道路・線路の形から計算しています。形のデータが無い系統は、道路（OpenStreetMap）や線路（国土数値情報）に沿わせて補っています。</li>
+      <li>時刻表の期間が切れている事業者は、同じ曜日（土休日）の最後のダイヤで代わりに走らせ、「代わりのダイヤ」と表示します。</li>
+      <li>実際の位置の遅れは、配信された位置を時刻表で通る時刻と比べた<b>目安</b>です。配信が遅れたり止まったりすることがあります。</li>
+      <li>このアプリは<b>非公式</b>で、事業者・自治体・データの提供元とは関係ありません。公式サイトから組み直したデータについて、事業者へ問い合わせないでください。</li>
+      <li><b>乗車の前には、最新の時刻・運行情報を各事業者の案内で確かめてください。</b></li>
+    </ul>
+  </div>
+</main>
+<footer>全国バス・鉄道軌跡マップ ／ <a href="./">地図を開く</a> ／ データの一覧はアプリの「出典」</footer>
+</body>
+</html>
