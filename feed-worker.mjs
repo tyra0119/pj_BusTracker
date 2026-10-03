@@ -1,5 +1,5 @@
 // フィードの取得と解析を、画面とは別のスレッドで行う（feed-prepare.mjs）
-import { prepareFeed } from './feed-prepare.mjs?v=c57a137-0715';
+import { prepareFeed } from './feed-prepare.mjs?v=860558d-0717';
 
 self.onmessage = async (e) => {
   const { id, url } = e.data;
