@@ -1,9 +1,9 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=3946891-0632';
-import { holidayName } from './holidays.mjs?v=3946891-0632';
-import { Realtime } from './realtime.mjs?v=3946891-0632';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2f35822-0643';
+import { holidayName } from './holidays.mjs?v=2f35822-0643';
+import { Realtime } from './realtime.mjs?v=2f35822-0643';
 
-const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer } = deck;
+const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hhmm = (sec) => { sec = ((Math.floor(sec) % 86400) + 86400) % 86400; return `${String(Math.floor(sec / 3600)).padStart(2, '0')}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`; };
@@ -125,7 +125,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=3946891-0632', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=2f35822-0643', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -633,6 +633,7 @@ function showP11(o) {
 }
 function clearSelection() {
   panelArea = null;
+  rtFollow = null;
   sel = null; selGeom = null; selTrip = null; selStop = null; follow = false;
   $('panel').hidden = true;
 }
@@ -766,7 +767,9 @@ $('panelBody').addEventListener('click', (e) => {
   else if (b.dataset.act === 'fit') { follow = false; fitRoute(); }
   else if (b.dataset.act === 'follow') { follow = !follow; refreshPanel(); }
   else if (b.dataset.act === 'close') clearSelection();
-  else if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { const { feed, pat } = schedule.tripInfo(rtPanel.j); selTrip = { f: feed.i, k: schedule.ti[rtPanel.j] }; selectRoute(feed.i, pat.r, { keepTrip: true }); }
+  else if (b.dataset.act === 'rtfollow' && rtPanel) { rtFollow = rtFollow === rtPanel.key ? null : rtPanel.key; showRtVehicle(rtData.find((x) => x.key === rtPanel.key) ?? rtPanel, true); }
+  else if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { rtFollow = null; }
+  if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { const { feed, pat } = schedule.tripInfo(rtPanel.j); selTrip = { f: feed.i, k: schedule.ti[rtPanel.j] }; selectRoute(feed.i, pat.r, { keepTrip: true }); }
 });
 $('panelClose').onclick = clearSelection;
 
@@ -848,6 +851,14 @@ function onClick(info) {
 }
 
 // ---------- リアルタイムの位置 ----------
+// 印の絵（白で描き、色は deck の mask で付ける）: 丸 = バス、角の丸い四角 = 電車
+const RT_ICONS = (() => {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+  const g = c.getContext('2d'); g.fillStyle = '#fff';
+  g.beginPath(); g.arc(32, 32, 30, 0, Math.PI * 2); g.fill();
+  g.beginPath(); if (g.roundRect) g.roundRect(66, 2, 60, 60, 14); else g.rect(66, 2, 60, 60); g.fill();
+  return { url: c.toDataURL(), mapping: { bus: { x: 0, y: 0, width: 64, height: 64, mask: true }, train: { x: 64, y: 0, width: 64, height: 64, mask: true } } };
+})();
 function schedLookup(f, k) {
   if (!schedIndex) {
     schedIndex = new Map();
@@ -856,7 +867,7 @@ function schedLookup(f, k) {
   return schedIndex.get(`${f}:${k}`);
 }
 /** 実際の位置が、時刻表ではいつの位置か → 遅れ（秒。正なら遅れ）。形状上のいちばん近い点で見る */
-function delayOf(j, lon, lat) {
+function delayOf(j, lon, lat, at = clock.t) {
   const { feed, pat, prof, start } = schedule.tripInfo(j);
   const sh = feed.shape(pat.g);
   const kx = Math.cos(lat * Math.PI / 180);
@@ -868,7 +879,7 @@ function delayOf(j, lon, lat) {
   while (k < n - 2 && d[k + 1] < dist) k++;
   const f = d[k + 1] > d[k] ? Math.min(1, Math.max(0, (dist - d[k]) / (d[k + 1] - d[k]))) : 0;
   const tAt = start + dep[k] + f * (arr[k + 1] - dep[k]);
-  const delay = clock.t - tAt;
+  const delay = at - tAt;
   return Math.abs(delay) > 3 * 3600 ? null : delay;
 }
 const rtFeedOk = (i) => { const f = feeds[i]; if (!f) return false; const v = viewBounds(0.2); return boxHit(f.meta.bbox, v); };
@@ -880,22 +891,43 @@ function updateRealtime() {
     const map_ = rt.tripMap(v.i);
     const k = map_?.get(v.tripId);
     const j = k != null ? schedLookup(v.i, k) : undefined;
-    let sp = null, delay = null;
-    if (j != null) {
-      const p = [0, 0, 0];
-      if (schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) { schedule.position(j, clock.t, p); sp = [p[0], p[1]]; }
-      delay = delayOf(j, v.lon, v.lat);
-    }
-    out.push({ lon: v.lon, lat: v.lat, sp, delay, j: j ?? -1, v });
+    let delay = null;
+    // 位置を測った時刻（その日の 0 時からの秒）。無ければいま
+    let at = clock.t;
+    if (v.ts) { at = ((v.ts + 9 * 3600) % 86400); if (at - clock.t > 43200) at -= 86400; if (clock.t - at > 43200) at += 86400; }
+    if (j != null) delay = delayOf(j, v.lon, v.lat, at);
+    const feed = feeds[v.i];
+    const rail = j != null ? schedule.tripInfo(j).route.mode === 2 : !!feed && feed.routes.some((r) => r.mode === 2) && !feed.routes.some((r) => r.mode !== 2);
+    const key = `${v.name}|${v.id || v.tripId}`;
+    out.push({ key, lon: v.lon, lat: v.lat, rlon: v.lon, rlat: v.lat, sp: null, delay, j: j ?? -1, v, rail });
   }
   rtData = out;
 }
+// 毎フレーム: 時刻表に結べた車両は、測った位置から求めた遅れの分だけずらして時刻表に沿って動かす（位置の配信は 30 秒ごとなので、そのままだと飛ぶ）
+const rtTmp = [0, 0, 0];
+function moveRealtime() {
+  for (const d of rtData) {
+    d.sp = null;
+    if (d.j < 0) continue;
+    const ts = schedule.ts[d.j], te = schedule.te[d.j];
+    if (ts <= clock.t && te >= clock.t) { schedule.position(d.j, clock.t, rtTmp); d.sp = [rtTmp[0], rtTmp[1]]; }
+    if (d.delay == null) continue;
+    const tt = clock.t - d.delay;
+    if (tt >= ts && tt <= te) { schedule.position(d.j, tt, rtTmp); d.lon = rtTmp[0]; d.lat = rtTmp[1]; }
+  }
+  if (rtFollow) {
+    const d = rtData.find((x) => x.key === rtFollow);
+    if (d) map.jumpTo({ center: [d.lon, d.lat] });
+  }
+}
+let rtFollow = null; // 追いかけている車両の key
 const delayColor = (d) => (d == null ? [200, 205, 215] : d > 300 ? [255, 80, 80] : d > 120 ? [255, 200, 0] : d < -60 ? [90, 170, 255] : [80, 225, 130]);
 const delayText = (d) => (d == null ? '時刻表の便と結べませんでした' : Math.abs(d) < 60 ? 'ほぼ時刻表どおり' : d > 0 ? `約 ${Math.round(d / 60)} 分遅れ` : `約 ${Math.round(-d / 60)} 分早い`);
-function showRtVehicle(o) {
+function showRtVehicle(o, keepFollow) {
   sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { rt: true };
+  if (!keepFollow) { rtFollow = o.key; follow = false; }
   const feed = feeds[o.v.i];
-  let h = `<h2><i class="sw" style="background:${rgbCss(delayColor(o.delay))};border-radius:50%"></i>実際の位置</h2>`;
+  let h = `<h2><i class="sw" style="background:${rgbCss(delayColor(o.delay))};border-radius:${o.rail ? '3px' : '50%'}"></i>実際の位置（${o.rail ? '電車' : 'バス'}）</h2>`;
   if (o.j >= 0) {
     const { pat, route } = schedule.tripInfo(o.j);
     h += `<p class="op">${esc(agencyName(feed, route))}　${esc(routeName(route))}　${esc(pat.h)} 行</p>`;
@@ -905,12 +937,14 @@ function showRtVehicle(o) {
   }
   const at = o.v.ts ? new Date(o.v.ts * 1000 + 9 * 3600e3).toISOString().slice(11, 19) : '—';
   h += `<dt>位置の時刻</dt><dd>${at}</dd>${o.v.label ? `<dt>車両</dt><dd>${esc(o.v.label)}</dd>` : ''}</dl>`;
-  h += `<div class="act">${o.j >= 0 ? '<button type="button" data-act="rtroute">この系統を見る</button>' : ''}<button type="button" data-act="close">閉じる</button></div>`;
-  h += '<p class="note">実際の位置は、公共交通オープンデータセンターが配信する GTFS リアルタイム（車両位置）を中継サーバ経由で 30 秒ごとに読んだものです。細い線の先が、同じ便の時刻表どおりの位置です。遅れは、実際の位置を時刻表で通る時刻と比べた目安です。</p>';
+  h += `<div class="act"><button type="button" data-act="rtfollow" aria-pressed="${rtFollow === o.key}">${rtFollow === o.key ? '追いかけ中（押すとやめる）' : 'この車両を追いかける'}</button>${o.j >= 0 ? `<button type="button" data-act="rtroute">この${o.rail ? '路線' : '系統'}を見る</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
+  h += `<p class="note">実際の位置は、公共交通オープンデータセンターが配信する GTFS リアルタイム（車両位置）を中継サーバ経由で 30 秒ごとに読んだものです。${o.j >= 0 && o.delay != null ? '次の位置が届くまでは、測った位置から求めた遅れの分だけ時刻表に沿って動かしています（届いたら補正）。' : ''}細い線の先が、同じ便の時刻表どおりの位置です。遅れは、実際の位置を時刻表で通る時刻と比べた目安です。地図を手で動かすと追いかけるのをやめます。</p>`;
   $('panel').hidden = false;
   $('panelBody').innerHTML = h;
   rtPanel = o;
+  rtPanelAt = performance.now();
 }
+let rtPanelAt = 0;
 let rtPanel = null;
 
 // ---------- デマンド交通の区域 ----------
@@ -1105,11 +1139,18 @@ function layers() {
       id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => d.sp, getTargetPosition: (d) => [d.lon, d.lat],
       getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
     }));
-    out.push(new ScatterplotLayer({
-      id: 'rt', data: rtData, getPosition: (d) => [d.lon, d.lat], radiusUnits: 'pixels', getRadius: z < 9 ? 3.5 : z < 13 ? 5 : 7,
-      getFillColor: (d) => [...delayColor(d.delay), 235], stroked: true, getLineColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255],
-      lineWidthUnits: 'pixels', getLineWidth: 2, pickable: true, updateTriggers: { getFillColor: [rtTick] },
+    // 電車は角の丸い四角、バスは丸。白い縁（下の層）＋遅れの色（上の層）
+    const sz = z < 9 ? 9 : z < 13 ? 13 : 17;
+    const common = { data: rtData, iconAtlas: RT_ICONS.url, iconMapping: RT_ICONS.mapping, getIcon: (d) => (d.rail ? 'train' : 'bus'), getPosition: (d) => [d.lon, d.lat], sizeUnits: 'pixels', billboard: false };
+    out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 1.45 : sz) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
+    out.push(new IconLayer({
+      ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 1.45 : sz), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
+      updateTriggers: { getColor: [rtTick], getSize: [sz] },
     }));
+    if (rtFollow) {
+      const d = rtData.find((x) => x.key === rtFollow);
+      if (d) out.push(new ScatterplotLayer({ id: 'rtFollowRing', data: [d], getPosition: (x) => [x.lon, x.lat], radiusUnits: 'pixels', getRadius: sz * 1.4, filled: false, stroked: true, getLineColor: [255, 196, 0, 255], lineWidthUnits: 'pixels', getLineWidth: 2.5 }));
+    }
   }
   if (selTrip) {
     const j = findTripIndex(selTrip.f, selTrip.k);
@@ -1147,6 +1188,7 @@ function frameBody(now) {
   if (schedule.day != null) {
     const w0 = performance.now();
     updateHeads();
+    if (rtData.length) moveRealtime();
     updateAreas();
     ensureTrails();
     overlay.setProps({ layers: layers() });
@@ -1157,7 +1199,10 @@ function frameBody(now) {
     $('time').textContent = hhmmss(clock.t);
     if (!sliderDragging) $('slider').value = Math.floor(clock.t);
     $('nRun').textContent = fmt(nView);
-    if (now - rtTick > 1000) { rtTick = now; updateRealtime(); }
+    if (now - rtTick > 1000) {
+      rtTick = now; updateRealtime();
+      if (panelArea?.rt && rtPanel && now - rtPanelAt > 5000) { const d = rtData.find((x) => x.key === rtPanel.key); if (d) showRtVehicle(d, true); }
+    }
     $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] && i < 3 ? x : 0), 0));
     renderChips();
     if (selTrip || selStop || sel) {
@@ -1268,6 +1313,7 @@ $('theme').onchange = (e) => {
 $('btnSources').onclick = () => $('dlgSources').showModal();
 $('btnHelp').onclick = () => $('dlgHelp').showModal();
 map.on('zoomend', () => { routesLayerDirty = true; });
+map.on('dragstart', () => { if (rtFollow || follow) { rtFollow = null; follow = false; if (panelArea?.rt && rtPanel) showRtVehicle(rtData.find((x) => x.key === rtPanel.key) ?? rtPanel, true); } });
 
 // ---------- 走っている台数のグラフ（時刻のつまみの下） ----------
 function drawHist() {
