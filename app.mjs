@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=2847eba-0549';
-import { holidayName } from './holidays.mjs?v=2847eba-0549';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=254b607-0554';
+import { holidayName } from './holidays.mjs?v=254b607-0554';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -124,7 +124,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=2847eba-0549', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=254b607-0554', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -402,6 +402,7 @@ function p11Cell(k) {
 }
 // 線路（国土数値情報 N02）
 let trackLines = [];
+let railStatus = {}; // N02 の会社名 → { name, status, reason, contact, where }（scripts/build-rail-status.mjs）
 let trackMeta = [];
 async function loadStatic() {
   try {
@@ -417,6 +418,10 @@ async function loadStatic() {
       }
     });
   } catch (e) { console.warn('rail-lines', e); }
+  try {
+    const rs = await fetch('./data/rail-status.json');
+    if (rs.ok) railStatus = await rs.json();
+  } catch (e) { console.warn('rail-status', e); }
   try {
     const r = await fetch('./data/p11-index.json');
     p11Index = new Set((await r.json()).cells);
@@ -473,6 +478,69 @@ function showArea(d) {
     <p class="note">予約して乗る乗り物です。決まった時刻・経路で走らないので、地図には乗れる区域（停留所を囲んだ範囲）を、受付の時間帯に光らせて出しています。乗り方は事業者の案内で確かめてください。</p>
     <p class="note">出典: ${esc(feed.meta.name)}（${esc(feed.meta.src)}・${esc(feed.meta.license)}）</p>`;
   panelArea = d;
+}
+// 線路を押したとき: その近くを時刻表のデータのある列車が走っているか。走っていなければ、データが無い理由
+function showTrack(t, coord) {
+  const m = trackMeta[t.li];
+  const [x, y] = coord ?? [0, 0];
+  // 押した点から 300 m 以内を通る鉄道の系統（読み込んであるもの）
+  const near = new Map();
+  const tol = 0.003;
+  for (const feed of feeds) {
+    if (!feed || !feed.routes.some((r) => r.mode === 2)) continue;
+    const bb = feed.meta.bbox;
+    if (x < bb[0] - 0.05 || x > bb[2] + 0.05 || y < bb[1] - 0.05 || y > bb[3] + 0.05) continue;
+    const seen = new Set();
+    for (const p of feed.pats) {
+      if (feed.routes[p.r].mode !== 2 || seen.has(p.g)) continue;
+      seen.add(p.g);
+      const sh = feed.shape(p.g);
+      for (let v = 0; v < sh.lat.length; v++) {
+        if (Math.abs(sh.lon[v] - x) < tol && Math.abs(sh.lat[v] - y) < tol) { near.set(`${feed.i}:${p.r}`, { f: feed.i, r: p.r }); break; }
+      }
+    }
+  }
+  sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { track: true };
+  let h = `<h2><i class="sw" style="background:#96afa5"></i>${esc(m.name)}</h2><p class="op">${esc(m.op)}</p>`;
+  if (near.size) {
+    h += '<p>この線路では、時刻表どおりに列車を走らせています。路線を押すと選べます。</p><div class="rt-pick">';
+    for (const { f, r } of near.values()) {
+      const rt = feeds[f].routes[r];
+      h += `<button type="button" data-route="${f}:${r}"><i class="sw" style="background:${rgbCss(rt.rgb)}"></i>${esc(routeName(rt))}<small>${esc(feeds[f].meta.name.replace(/（.*$/, ''))}</small></button>`;
+    }
+    h += '</div>';
+  } else {
+    const st = railStatus[m.op];
+    h += '<p><b>この路線は、時刻表のデータが無いため列車を走らせていません。</b></p>';
+    if (!st) {
+      h += '<p class="note">公開されている時刻表のオープンデータ（GTFS など）が見つかっていません。会社のサイトの時刻表を使ってよいかは、まだ詳しく調べていません。</p>';
+    } else if (st.status === 'prohibited') {
+      h += '<p class="note">この会社の時刻表は、公開元の利用規約や robots.txt で、機械的な取得・加工・二次利用が禁じられています。そのため使っていません。</p>';
+    } else if (st.status === 'unknown') {
+      h += '<p class="note">公開されている時刻表をこの地図で使ってよいか、利用規約からは判断できません（「無断複製の禁止」などの一般的な定めだけ、または規約が見つからない）。会社に確認できれば使える可能性があります。</p>';
+    } else {
+      h += '<p class="note">時刻表は使ってよいと判断しましたが、まだ取り込めていません（PDF の文字が読み取れないなど）。</p>';
+    }
+    if (st) {
+      const linkify = (txt) => esc(txt).replace(/https?:\/\/[^\s）)」<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+      h += `<dl class="kv"><dt>調べた会社</dt><dd>${esc(st.name)}</dd><dt>根拠</dt><dd>${linkify(st.reason)}</dd>`;
+      if (st.where) h += `<dt>公式の時刻表</dt><dd><a href="${esc(st.where)}" target="_blank" rel="noopener">${esc(st.where)}</a></dd>`;
+      if (st.contact && st.status !== 'prohibited') h += `<dt>問い合わせ先</dt><dd>${/^https?:/.test(st.contact) ? `<a href="${esc(st.contact)}" target="_blank" rel="noopener">${esc(st.contact)}</a>` : esc(st.contact)}</dd>`;
+      h += '</dl>';
+    }
+    h += '<p class="note">線路の位置は国土数値情報（鉄道データ）です。調査日 2026-10-03。</p>';
+  }
+  $('panel').hidden = false;
+  $('panelBody').innerHTML = h;
+}
+// 時刻表のデータが無いバス停（国土数値情報 P11）を押したとき
+function showP11(o) {
+  sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { p11: true };
+  $('panel').hidden = false;
+  $('panelBody').innerHTML = `<h2><i class="sw" style="background:#7a828c"></i>${esc(o.name)}</h2><p class="op">${esc(o.op)}</p>
+    <p><b>このバス停は、時刻表のデータが無いためバスを走らせていません。</b></p>
+    <p class="note">この事業者の時刻表（GTFS など）が公開されていないか、まだ見つかっていません。公開されている事業者の時刻表を使ってよいかは、事業者ごとに利用規約を確かめています。</p>
+    <p class="note">バス停の位置と名前は国土数値情報（バス停留所データ P11、2022 年）です。今は廃止されている・名前が変わっている場合があります。</p>`;
 }
 function clearSelection() {
   panelArea = null;
@@ -639,10 +707,10 @@ function describe(info) {
   }
   if (info.layer.id === 'tracks' && info.object) {
     const m = trackMeta[info.object.li];
-    return `<b>${esc(m.name)}</b><span>${esc(m.op)}　線路（国土数値情報）</span>`;
+    return `<b>${esc(m.name)}</b><span>${esc(m.op)}　押すと列車の有無と理由が出ます</span>`;
   }
   if (info.layer.id === 'p11' && info.object) {
-    return `<b>${esc(info.object.name)}</b><span>${esc(info.object.op)}　バス停（国土数値情報 P11）。時刻表のデータはまだありません</span>`;
+    return `<b>${esc(info.object.name)}</b><span>${esc(info.object.op)}　時刻表のデータがまだ無いバス停（押すと説明）</span>`;
   }
   if (info.layer.id === 'areas' && info.object) {
     const d = info.object, feed = feeds[d.f], rt = feed.routes[d.r];
@@ -666,6 +734,8 @@ function onClick(info) {
   }
   if (info.layer?.id === 'routes' && info.object) { selectRoute(info.object.f, info.object.r); return; }
   if (info.layer?.id === 'areas' && info.object) { showArea(info.object); return; }
+  if (info.layer?.id === 'tracks' && info.object) { showTrack(info.object, info.coordinate); return; }
+  if (info.layer?.id === 'p11' && info.object) { showP11(info.object); return; }
   if ((info.layer?.id === 'stops' || info.layer?.id === 'selStops') && info.object) {
     const f = info.object.f ?? sel.f;
     selStop = { f, s: info.object.s };
