@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=8600af3-2339';
-import { holidayName } from './holidays.mjs?v=8600af3-2339';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=fd3a25b-0514';
+import { holidayName } from './holidays.mjs?v=fd3a25b-0514';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -117,6 +117,26 @@ async function loadAll() {
   map.on('moveend', () => { if (MOBILE) { clearTimeout(syncTimer); syncTimer = setTimeout(syncFeeds, 700); } });
 }
 let syncTimer = null;
+// フィードの取得と解析は Web Worker で（画面を止めない）。Worker が使えなければ画面側で
+const workers = [];
+const pending = new Map();
+let reqId = 0;
+try {
+  for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
+    const w = new Worker('./feed-worker.mjs?v=fd3a25b-0514', { type: 'module' });
+    w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
+    w.onerror = () => { w.broken = true; };
+    workers.push(w);
+  }
+} catch { /* Worker が使えない */ }
+function fetchFeed(m) {
+  const url = new URL(`./data/f/${m.i}.json?v=202610031439`, location.href).href;
+  const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
+  if (!w) return fetch(url).then((r) => r.json());
+  const id = ++reqId;
+  return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); w.postMessage({ id, url }); })
+    .catch(() => fetch(url).then((r) => r.json())); // Worker で失敗したら画面側で
+}
 async function syncFeeds() {
   if (!index) return;
   const seq = ++loadSeq;
@@ -143,7 +163,7 @@ async function syncFeeds() {
         held -= f.meta.size; feeds[f.i] = undefined; schedule.feeds[f.i] = undefined; dropped++;
       }
     }
-    if (dropped) scheduleRebuild();
+    if (dropped) scheduleRebuild(true); // 手放したフィードの便を一覧に残さない（残ると毎フレームの更新が止まっていた）
     list = list.filter((m) => add.includes(m.i));
     const partial = add.length < inView.length;
     $('load').textContent = `見ている範囲 ${fmt(want.size)} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
@@ -156,10 +176,8 @@ async function syncFeeds() {
       const m = queue.shift();
       loadingNow.add(m.i);
       try {
-        const r = await fetch(`./data/f/${m.i}.json?v=202610031439`);
-        const raw = await r.json();
+        const raw = await fetchFeed(m);
         if (MOBILE && seq !== loadSeq) continue; // 待つ間に地図が動いた
-        if (MOBILE) await new Promise((r) => requestAnimationFrame(() => r())); // 解析のあと、描画に順番を譲る
         const f = new Feed(m, raw);
         feeds[m.i] = f;
         schedule.addFeed(f);
@@ -224,6 +242,7 @@ function updateHeads() {
   for (let k = 0; k < m; k++) {
     const j = runBuf[k];
     const fi = schedule.tf[j], feed = feeds[fi];
+    if (!feed) continue;
     const pat = feed.pats[feed.trips[schedule.ti[j] * 4]];
     const rt = feed.routes[pat.r];
     nMode[rt.mode]++;
@@ -268,6 +287,7 @@ function buildTrails() {
   const data = [];
   for (const j of schedule.overlapping(w0 - L, w1)) {
     const fi = schedule.tf[j];
+    if (!feeds[fi]) continue;
     if (bounds && !boxHit(feeds[fi].meta.bbox, bounds)) continue;
     { const fd = feeds[fi]; if (!kindOk(fd.routes[fd.pats[fd.trips[schedule.ti[j] * 4]].r])) continue; }
     const p = schedule.trailPath(j, Math.max(schedule.ts[j], w0 - L), Math.min(schedule.te[j], w1), base, false, gap);
@@ -835,6 +855,10 @@ let last = performance.now(), uiTick = 0;
 const perf = { ms: 0, log: [] };
 setInterval(() => { if (perf.log.length > 100) perf.log.splice(0, perf.log.length - 100); }, 10000);
 function frame(now) {
+  requestAnimationFrame(frame); // 先に次を頼む（途中でエラーが出ても動き続ける）
+  try { frameBody(now); } catch (e) { console.error(e); }
+}
+function frameBody(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
   if (clock.live) {
@@ -866,7 +890,6 @@ function frame(now) {
       if (panelTimer % 8 === 0 && !$('panel').matches(':hover')) refreshPanel();
     }
   }
-  requestAnimationFrame(frame);
 }
 
 // ---------- 操作 ----------

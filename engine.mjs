@@ -2,7 +2,8 @@
 //  - フィード（build-data.mjs の出力）を読み、選んだ日に走る便を集める
 //  - 時刻 t（その日の 0 時からの秒）で、走っている便の位置を形状に沿って補間する
 //  - 軌跡（TripsLayer）用に、時間の窓の中の経路と通過時刻を作る
-import { holidayName } from './holidays.mjs?v=8600af3-2339';
+import { holidayName } from './holidays.mjs?v=fd3a25b-0514';
+import { prepareFeed } from './feed-prepare.mjs?v=fd3a25b-0514';
 
 const DAY = 86400;
 const EPOCH = Date.UTC(2000, 0, 1);
@@ -52,32 +53,28 @@ function hexColor(hex) {
 }
 
 export class Feed {
+  // raw: feed-worker.mjs が詰めたもの（packed）か、JSON そのもの（Worker が使えないとき。ここで詰める）
   constructor(meta, raw) {
+    const d = raw.packed ? raw : prepareFeed(raw).data;
     this.meta = meta;
     this.i = meta.i;
-    this.agencies = raw.agencies;
+    this.agencies = d.agencies;
     // mode: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通
-    this.routes = raw.routes.map(([short, long, color, ai, mode]) => ({ short, long, color: hexColor(color), ai, mode: mode ?? 0, hw: mode === 1 }));
+    this.routes = d.routes.map(([short, long, color, ai, mode]) => ({ short, long, color: hexColor(color), ai, mode: mode ?? 0, hw: mode === 1 }));
     const base = PALETTE[meta.i % PALETTE.length];
     for (const r of this.routes) r.rgb = r.color ?? base;
-    this.svc = raw.svc;
-    const st = decodePolyline(raw.stops);
-    this.stopLat = st.lat; this.stopLon = st.lon; this.stopNames = raw.stopNames;
-    this.shapesRaw = raw.shapes;
-    this.shapes = new Array(raw.shapes.length);
-    this.pats = raw.pats.map(([r, h, g, s, d]) => ({ r, h, g, s: Int32Array.from(s), d: Float64Array.from(d) }));
-    // 時間の型 → 最初の停留所の着からの、各停留所の着・発（秒）
-    this.profs = raw.profs.map(([run, dwell]) => {
-      const n = run.length + 1, arr = new Int32Array(n), dep = new Int32Array(n);
-      dep[0] = dwell ? dwell[0] : 0;
-      for (let k = 1; k < n; k++) { arr[k] = dep[k - 1] + run[k - 1]; dep[k] = arr[k] + (dwell ? dwell[k] : 0); }
-      return { arr, dep };
-    });
-    this.trips = Int32Array.from(raw.trips);
+    this.svc = d.svc;
+    this.stopLat = d.stopLat; this.stopLon = d.stopLon; this.stopNames = d.stopNames;
+    this.shapesRaw = d.shapes;
+    this.shapes = new Array(d.shapes.length);
+    // 1 本の配列の一部を指す（コピーしない）
+    this.pats = Array.from(d.patR, (r, i) => ({ r, h: d.patH[i], g: d.patG[i], s: d.patS.subarray(d.patOff[i], d.patOff[i + 1]), d: d.patD.subarray(d.patOff[i], d.patOff[i + 1]) }));
+    this.profs = Array.from({ length: d.profOff.length - 1 }, (_, i) => ({ arr: d.profArr.subarray(d.profOff[i], d.profOff[i + 1]), dep: d.profDep.subarray(d.profOff[i], d.profOff[i + 1]) }));
+    this.trips = d.trips;
     this.nTrips = this.trips.length / 4;
     // デマンド交通の区域（凸包）と、乗れる時間帯 [系統, 運行日, 始, 終, 区域]
-    this.areas = (raw.areas ?? []).map((a) => { const p = decodePolyline(a); return Array.from(p.lat, (lat, i) => [p.lon[i], lat]); });
-    this.flex = Int32Array.from(raw.flex ?? []);
+    this.areas = d.areas.map((a) => { const p = decodePolyline(a); return Array.from(p.lat, (lat, i) => [p.lon[i], lat]); });
+    this.flex = d.flex;
   }
   shape(g) {
     let s = this.shapes[g];
