@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="build" content="17270ce-2211">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>全国バス軌跡マップ</title>
+<meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="./style.css?v=17270ce-2211">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
+</head>
+<body>
+<div id="map"></div>
+
+<header id="head">
+  <div class="title">
+    <h1>全国バス軌跡マップ</h1>
+    <p class="sub">バス・鉄道を時刻表どおりに走らせた位置です（実際の位置ではありません）</p>
+  </div>
+  <div class="stats">
+    <div><b id="nRun">0</b><span>が走行中</span></div>
+    <div class="load" id="load">データを読み込んでいます…</div>
+  </div>
+  <div class="chips" id="chips" role="group" aria-label="表示する乗り物"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="系統・事業者・停留所を探す" autocomplete="off" aria-label="系統・事業者・停留所を探す">
+    <ul id="qres" hidden></ul>
+  </div>
+  <div class="tools">
+    <button type="button" id="btnSettings" aria-expanded="false">表示</button>
+    <button type="button" id="btnSources">出典</button>
+    <button type="button" id="btnHelp">使い方</button>
+  </div>
+  <div id="settings" class="pop" hidden>
+    <label>軌跡の長さ
+      <select id="trailLen">
+        <option value="0">なし</option>
+        <option value="180">短い（3分）</option>
+        <option value="600" selected>ふつう（10分）</option>
+        <option value="1200">長い（20分）</option>
+        <option value="1800">とても長い（30分）</option>
+        <option value="3600">1時間</option>
+      </select>
+    </label>
+    <label>路線の線
+      <select id="routeMode">
+        <option value="auto" selected>拡大したら出す</option>
+        <option value="on">いつも出す</option>
+        <option value="off">出さない</option>
+      </select>
+    </label>
+    <label>地図
+      <select id="theme">
+        <option value="dark" selected>暗い</option>
+        <option value="light">明るい</option>
+      </select>
+    </label>
+  </div>
+</header>
+
+<aside id="panel" hidden>
+  <button type="button" class="close" id="panelClose" aria-label="閉じる">×</button>
+  <div id="panelBody"></div>
+</aside>
+
+<footer id="bar">
+  <div class="row1">
+    <button type="button" id="play" class="play" aria-label="一時停止">❚❚</button>
+    <div class="clock">
+      <input type="date" id="date" aria-label="日付">
+      <span id="dayType" class="daytype"></span>
+      <b id="time">--:--:--</b>
+      <span id="live" class="live" hidden>● いま</span>
+    </div>
+    <div class="speeds" role="group" aria-label="速さ">
+      <button type="button" data-s="1">×1</button>
+      <button type="button" data-s="10">×10</button>
+      <button type="button" data-s="60">×60</button>
+      <button type="button" data-s="300">×300</button>
+      <button type="button" data-s="1200">×1200</button>
+    </div>
+    <button type="button" id="now" class="now">いま</button>
+  </div>
+  <div class="slider">
+    <canvas id="hist" aria-hidden="true"></canvas>
+    <input type="range" id="slider" min="0" max="86399" step="1" value="0" aria-label="時刻">
+    <div class="ticks"><span>0</span><span>3</span><span>6</span><span>9</span><span>12</span><span>15</span><span>18</span><span>21</span><span>24</span></div>
+  </div>
+</footer>
+
+<dialog id="dlgSources">
+  <form method="dialog"><button class="close" aria-label="閉じる">×</button></form>
+  <h2>出典</h2>
+  <div id="sourcesBody"></div>
+</dialog>
+<dialog id="dlgHelp">
+  <form method="dialog"><button class="close" aria-label="閉じる">×</button></form>
+  <h2>使い方</h2>
+  <ul class="help">
+    <li>光る点がバス・列車、後ろに伸びて徐々に消えていく尾が、通ってきた軌跡（残像）です。公開されている<b>時刻表どおり</b>に走らせた位置で、遅れや運休は入っていません。</li>
+    <li>下のつまみで時刻を動かせます。<b>×10〜×1200</b> で早送り、<b>いま</b> で現在の時刻に戻ります。帯のグラフは、その時刻に走っているバスの数です。</li>
+    <li>地図はドラッグで移動、ホイールやピンチで拡大できます。拡大すると路線の線と停留所が出ます。</li>
+    <li><b>路線の線・バス・停留所を押すと、その系統を選べます。</b>ほかの系統は暗くなり、その系統のバスだけが光ります。停留所を押すと、そこを通る系統の一覧から選べます。</li>
+    <li>上の札（<b>路線バス・高速バス・鉄道・デマンド</b>）を押すと、表示を切り替えられます。数はいま走っている台数（デマンドは受付中の区域の数）です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</li>
+    <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
+    <li>右上のボタン: 拡大・縮小・方角（北を上に戻す。右ドラッグや 2 本指で回せます）・現在地・全体表示。</li>
+    <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
+    <li>時刻表の期間が切れている事業者は、同じ曜日（土休日）の最後のダイヤで代わりに走らせ、「代わりのダイヤ」と表示します。</li>
+    <li>データ: GTFS-JP（gtfs-data.jp・公共交通オープンデータセンター）と、GTFS を公開していない事業者は時刻表から組み直したもの（非公式）。一覧は「出典」に。</li>
+  </ul>
+</dialog>
+
+<div id="tip" hidden></div>
+<script type="module" src="./app.mjs?v=17270ce-2211"></script>
+</body>
+</html>
