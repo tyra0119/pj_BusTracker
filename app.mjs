@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=53d491e-2320';
-import { holidayName } from './holidays.mjs?v=53d491e-2320';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=ac39268-2330';
+import { holidayName } from './holidays.mjs?v=ac39268-2330';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -105,7 +105,7 @@ function goNow() {
 // ---------- データ読み込み ----------
 // パソコン: 全国分を近い順に全部読む。スマホ: 見ている範囲（少し広め）のデータだけを、合計の大きさに上限を設けて読み、
 // 地図を動かしたら足りない分を読み、範囲から外れたものは手放す（全国 54 MB を一度に読むとスマホでは重い。2026-10-03）
-const BUDGET = MOBILE ? 16 * 1048576 : Infinity;
+const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
 let loadedBytes = 0, loadSeq = 0;
 const loadingNow = new Set();
 async function loadAll() {
@@ -114,7 +114,7 @@ async function loadAll() {
   renderSources();
   await syncFeeds();
   if (!MOBILE) $('load').textContent = `${fmt(index.feeds.length)} のデータ・${fmt(index.feeds.reduce((s, m) => s + m.trips, 0))} 便`;
-  map.on('moveend', () => { if (MOBILE) { clearTimeout(syncTimer); syncTimer = setTimeout(syncFeeds, 400); } });
+  map.on('moveend', () => { if (MOBILE) { clearTimeout(syncTimer); syncTimer = setTimeout(syncFeeds, 700); } });
 }
 let syncTimer = null;
 async function syncFeeds() {
@@ -126,18 +126,26 @@ async function syncFeeds() {
   if (MOBILE) {
     const v = viewBounds(0.5);
     const inView = list.filter((m) => boxHit(m.bbox, v));
-    // 予算に収まるだけ（近い順）
-    const want = new Set();
+    // 見ている範囲で、まだ読んでいないもの（近い順）を予算まで足す。
+    // 読んだものは予算を超えるまで手放さない（拡大・縮小のたびに手放して読み直すと、そのたびに固まった。2026-10-04）
+    const want = new Set(inView.map((m) => m.i));
     let bytes = 0;
-    for (const m of inView) { if (bytes + m.size > BUDGET && want.size) break; want.add(m.i); bytes += m.size; }
-    // 範囲から外れたものを手放す
+    const add = [];
+    for (const m of inView) { if (bytes + m.size > BUDGET && add.length) break; bytes += m.size; add.push(m.i); }
+    let held = feeds.filter(Boolean).reduce((t, f) => t + f.meta.size, 0) + add.filter((i) => !feeds[i]).reduce((t, i) => t + index.feeds[i].size, 0);
     let dropped = 0;
-    for (const f of feeds) {
-      if (f && !want.has(f.i)) { if (sel?.f === f.i || selStop?.f === f.i) clearSelection(); loadedBytes -= f.meta.size; feeds[f.i] = undefined; schedule.feeds[f.i] = undefined; dropped++; }
+    if (held > BUDGET) {
+      // 見ている範囲の外を、中心から遠い順に手放す
+      const far = feeds.filter((f) => f && !want.has(f.i)).sort((a, b) => dist(b.meta) - dist(a.meta));
+      for (const f of far) {
+        if (held <= BUDGET) break;
+        if (sel?.f === f.i || selStop?.f === f.i) clearSelection();
+        held -= f.meta.size; feeds[f.i] = undefined; schedule.feeds[f.i] = undefined; dropped++;
+      }
     }
     if (dropped) scheduleRebuild();
-    list = list.filter((m) => want.has(m.i));
-    const partial = want.size < inView.length;
+    list = list.filter((m) => add.includes(m.i));
+    const partial = add.length < inView.length;
     $('load').textContent = `見ている範囲 ${fmt(want.size)} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
   }
   const queue = list.filter((m) => !feeds[m.i] && !loadingNow.has(m.i));
@@ -151,14 +159,17 @@ async function syncFeeds() {
         const r = await fetch(`./data/f/${m.i}.json?v=202610031413`);
         const raw = await r.json();
         if (MOBILE && seq !== loadSeq) continue; // 待つ間に地図が動いた
+        if (MOBILE) await new Promise((r) => requestAnimationFrame(() => r())); // 解析のあと、描画に順番を譲る
         const f = new Feed(m, raw);
         feeds[m.i] = f;
         schedule.addFeed(f);
         loadedBytes += m.size;
+        if (MOBILE) await new Promise((r) => requestAnimationFrame(() => r()));
       } catch (e) { console.warn('feed', m.i, e); } finally { loadingNow.delete(m.i); }
       done++;
       if (!MOBILE || total > 3) $('load').textContent = `データ ${done} / ${total}`;
-      scheduleRebuild();
+      // スマホは読み込みの途中で便の一覧を作り直さない（最初の 1 件と、読み終わったときだけ）。途中の作り直しが拡大・縮小の引っかかりになっていた
+      if (!MOBILE || !schedule.n) scheduleRebuild();
     }
   };
   await Promise.all(Array.from({ length: MOBILE ? 3 : 6 }, step));
@@ -176,11 +187,13 @@ function scheduleRebuild(now) {
   rebuildTimer = setTimeout(() => { rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); }, wait);
 }
 function rebuildDay() {
+  const _t0 = performance.now();
   schedule.build(clock.day);
   trails.dirty = true;
   routesLayerDirty = true;
   drawHist();
   if (sel) refreshPanel();
+  perf.log.push(['day', Math.round(performance.now() - _t0)]);
 }
 function setDay(day) {
   if (day === clock.day && schedule.day === day) return;
@@ -240,6 +253,7 @@ function viewBounds(pad) {
 }
 const boxHit = (a, b) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
 function buildTrails() {
+  const _t0 = performance.now();
   // 早送りのときは軌跡を伸ばす（画面の上で 1.2 秒ぶんの尾になるように）
   // 尾の長さは縮尺に合わせる（画面の上でほぼ同じ長さに見えるように。拡大すると短く）
   const t = clock.t, L = trailLen ? Math.max(trailLen * zoomTrail(map.getZoom()), clock.speed * 1.2) : 0;
@@ -248,7 +262,7 @@ function buildTrails() {
   const H = Math.min(5400, Math.max(600, clock.speed * 8));
   const z = map.getZoom();
   const [mode, gap] = lod(z);
-  const bounds = z >= 7 ? viewBounds(0.6) : null;
+  const bounds = MOBILE ? viewBounds(0.25) : z >= 7 ? viewBounds(0.6) : null;
   const w0 = clock.speed >= 0 ? t : t - H, w1 = w0 + H;
   const base = w0 - L;
   const data = [];
@@ -261,7 +275,8 @@ function buildTrails() {
     const feed = feeds[fi], pat = feed.pats[feed.trips[schedule.ti[j] * 4]];
     data.push({ path: p.path, ts: p.ts, c: feed.routes[pat.r].rgb, f: fi, r: pat.r, m: feed.routes[pat.r].mode });
   }
-  Object.assign(trails, { data, w0, w1, base, L, zoomKey: mode + gap + Math.round(map.getZoom()), bounds, version: (trails.version ?? 0) + 1 });
+  perf.log.push(['trails', Math.round(performance.now() - _t0)]);
+  Object.assign(trails, { data, w0, w1, base, L, zoomKey: mode + gap + (MOBILE ? '' : Math.round(map.getZoom())), bounds, version: (trails.version ?? 0) + 1 });
 }
 function ensureTrails() {
   const t = clock.t;
@@ -270,7 +285,7 @@ function ensureTrails() {
 map.on('moveend', () => {
   const z = map.getZoom();
   const [mode, gap] = lod(z);
-  if (mode + gap + Math.round(z) !== trails.zoomKey) trails.dirty = true;
+  if (mode + gap + (MOBILE ? '' : Math.round(z)) !== trails.zoomKey) trails.dirty = true;
   else if (trails.bounds) {
     const v = viewBounds(0);
     if (v[0] < trails.bounds[0] || v[1] < trails.bounds[1] || v[2] > trails.bounds[2] || v[3] > trails.bounds[3]) trails.dirty = true;
@@ -280,6 +295,7 @@ map.on('moveend', () => {
 
 // ---------- 路線の線・停留所（見ている範囲の分だけ） ----------
 let routesLayerDirty = true;
+let routesPending = false;
 let busLines = [];     // { path, f, r }（バス停を結んだ線。読み込んだ全フィード）
 let busLinesKey = '';
 let stopPts = [];      // { p, f, s }（時刻表のある停留所・駅。見ている範囲）
@@ -312,6 +328,8 @@ function buildBusLines() {
   }
 }
 function buildRouteLines() {
+  const _t0 = performance.now();
+  queueMicrotask(() => perf.log.push(['lines', Math.round(performance.now() - _t0)]));
   routesLayerDirty = false;
   stopPts = []; p11Pts = [];
   const z = map.getZoom();
@@ -650,7 +668,10 @@ function layers() {
   const z = map.getZoom();
   const out = [];
   const dim = !!sel;
-  if (routesLayerDirty) buildRouteLines();
+  if (routesLayerDirty && !routesPending) {
+    routesPending = true;
+    (window.requestIdleCallback ?? ((f) => setTimeout(f, 50)))(() => { routesPending = false; buildRouteLines(); }, { timeout: 500 });
+  }
   const dark = theme === 'dark';
   if (lineOn.track && trackLines.length) {
     // 線路は背景。新幹線は少し明るく
@@ -660,14 +681,15 @@ function layers() {
       getPath: (d) => d.path,
       positionFormat: 'XY',
       getColor: (d) => (dark ? (d.kind === 1 ? [150, 200, 255, 120] : [150, 175, 165, 90]) : (d.kind === 1 ? [40, 90, 170, 150] : [70, 90, 85, 110])),
-      getWidth: (d) => (d.kind === 1 ? 1.6 : 1.2) * (z >= 13 ? 1.6 : z >= 10 ? 1.2 : 1),
+      getWidth: (d) => (d.kind === 1 ? 1.6 : 1.2),
+      widthScale: z >= 13 ? 1.6 : z >= 10 ? 1.2 : 1,
       widthUnits: 'pixels',
       widthMinPixels: 0.8,
       opacity: dim ? 0.4 : 1,
       pickable: z >= 9,
       autoHighlight: true,
       highlightColor: dark ? [220, 255, 230, 200] : [0, 90, 60, 200],
-      updateTriggers: { getColor: [dark], getWidth: [z >= 13, z >= 10] },
+      updateTriggers: { getColor: [dark] },
     }));
   }
   if (lineOn.busline) {
@@ -678,14 +700,16 @@ function layers() {
       data: busLines,
       getPath: (d) => d.path,
       positionFormat: 'XY',
-      getColor: dark ? [255, 214, 120, dim ? 14 : z >= 13 ? 60 : z >= 9 ? 42 : 30] : [150, 90, 0, dim ? 18 : z >= 13 ? 90 : 55],
-      getWidth: z >= 14 ? 2.2 : z >= 10 ? 1.4 : 1,
+      getColor: dark ? [255, 214, 120, 255] : [150, 90, 0, 255],
+      opacity: (dark ? (dim ? 14 : z >= 13 ? 60 : z >= 9 ? 42 : 30) : (dim ? 18 : z >= 13 ? 90 : 55)) / 255,
+      getWidth: 1,
+      widthScale: z >= 14 ? 2.2 : z >= 10 ? 1.4 : 1,
       widthUnits: 'pixels',
       widthMinPixels: 0.6,
       pickable: z >= 9,
       autoHighlight: true,
       highlightColor: dark ? [255, 255, 255, 220] : [0, 90, 150, 220],
-      updateTriggers: { getColor: [dim, z >= 13, z >= 9, dark] },
+      updateTriggers: { getColor: [dark] },
     }));
   }
   if (selGeom) {
@@ -716,7 +740,8 @@ function layers() {
         positionFormat: 'XY',
         getTimestamps: (d) => d.ts,
         getColor: (d) => (off(d) ? [...d.c, tr.k === 1 ? 40 : 0] : dark ? bright(d.c) : d.c),
-        getWidth: (d) => (d.m === 1 ? 1.5 : d.m === 2 ? 1.35 : 1) * tr.wd * w,
+        getWidth: (d) => (d.m === 1 ? 1.5 : d.m === 2 ? 1.35 : 1) * tr.wd,
+        widthScale: w,
         widthUnits: 'pixels',
         widthMinPixels: 1,
         capRounded: true,
@@ -726,7 +751,7 @@ function layers() {
         currentTime: clock.t - trails.base,
         opacity: tr.a,
         parameters: { ...add, depthWriteEnabled: false, depthCompare: 'always' },
-        updateTriggers: { getColor: [sel?.f, sel?.r, trails.version, dark], getWidth: [w] },
+        updateTriggers: { getColor: [sel?.f, sel?.r, trails.version, dark] },
       }));
     }
   }
@@ -805,7 +830,8 @@ function layers() {
 
 // ---------- 時計 ----------
 let last = performance.now(), uiTick = 0;
-const perf = { ms: 0 };
+const perf = { ms: 0, log: [] };
+setInterval(() => { if (perf.log.length > 100) perf.log.splice(0, perf.log.length - 100); }, 10000);
 function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
