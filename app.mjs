@@ -1,6 +1,6 @@
 // 全国バス軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=254b607-0554';
-import { holidayName } from './holidays.mjs?v=254b607-0554';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=72429de-0557';
+import { holidayName } from './holidays.mjs?v=72429de-0557';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -124,7 +124,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=254b607-0554', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=72429de-0557', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -361,6 +361,11 @@ function buildRouteLines() {
   routesLayerDirty = false;
   stopPts = []; p11Pts = [];
   const z = map.getZoom();
+  stationView = [];
+  if (lineOn.stops && z >= 10) {
+    const vb = viewBounds(0.3);
+    for (const st of stations) if (st.p[0] >= vb[0] && st.p[0] <= vb[2] && st.p[1] >= vb[1] && st.p[1] <= vb[3]) stationView.push(st);
+  }
   if (!lineOn.stops || z < 13) return;
   const bounds = viewBounds(0.3);
   for (const feed of feeds) {
@@ -402,6 +407,8 @@ function p11Cell(k) {
 }
 // 線路（国土数値情報 N02）
 let trackLines = [];
+let stations = [];  // 全国の駅（国土数値情報 N02）{ p, name, lines: [[会社, 路線]] }
+let stationView = []; // 見ている範囲の駅
 let railStatus = {}; // N02 の会社名 → { name, status, reason, contact, where }（scripts/build-rail-status.mjs）
 let trackMeta = [];
 async function loadStatic() {
@@ -418,6 +425,11 @@ async function loadStatic() {
       }
     });
   } catch (e) { console.warn('rail-lines', e); }
+  try {
+    const sr = await fetch('./data/stations.json');
+    if (sr.ok) stations = (await sr.json()).stations.map(([name, lat, lon, lines]) => ({ p: [lon, lat], name, lines }));
+    routesLayerDirty = true;
+  } catch (e) { console.warn('stations', e); }
   try {
     const rs = await fetch('./data/rail-status.json');
     if (rs.ok) railStatus = await rs.json();
@@ -530,6 +542,73 @@ function showTrack(t, coord) {
     }
     h += '<p class="note">線路の位置は国土数値情報（鉄道データ）です。調査日 2026-10-03。</p>';
   }
+  $('panel').hidden = false;
+  $('panelBody').innerHTML = h;
+}
+// 駅を押したとき: 通る路線ごとに、時刻表どおりに列車を走らせているか。走らせていれば発車の予定、無ければ理由
+// 会社の名前（N02 の正式な社名）と、データの事業者名（GTFS の agency・データの名前）を結ぶための通称
+const OP_ALIAS = { 東日本旅客鉄道: ['JR東日本', 'JR東'], 東京地下鉄: ['東京メトロ'], 東京都: ['都営', '東京都交通局'], 横浜市: ['横浜市営', '横浜市交通局'], 京都市: ['京都市営', '京都市交通局'], 名古屋市: ['名古屋市営', '名古屋市交通局'], 札幌市: ['札幌市営', '札幌市交通局'], 仙台市: ['仙台市地下鉄', '仙台市交通局'], 福岡市: ['福岡市地下鉄', '福岡市交通局'], 鹿児島市: ['鹿児島市電', '鹿児島市交通局'], 熊本市: ['熊本市電', '熊本市交通局'], 函館市: ['函館市電', '函館市企業局'], 首都圏新都市鉄道: ['つくばエクスプレス', 'MIR'], 東京臨海高速鉄道: ['りんかい', 'TWR'], 多摩都市モノレール: ['多摩モノレール'], 京浜急行電鉄: ['京急'], 東急電鉄: ['東急'], 沖縄都市モノレール: ['ゆいレール'], 高松琴平電気鉄道: ['ことでん'], とさでん交通: ['とさでん'] };
+function opServedBy(op, feed) {
+  const core = op.replace(/株式会社|（株）/g, '').trim();
+  const names = [feed.meta.name, feed.meta.org, ...(feed.meta.agencies ?? []), ...feed.agencies.map((a) => a[0])].filter(Boolean).join(' ');
+  return names.includes(core) || (OP_ALIAS[core] ?? []).some((a) => names.includes(a));
+}
+function showStation(st) {
+  const [x, y] = st.p;
+  // 300 m 以内の、時刻表のある鉄道の駅（読み込んであるもの）
+  let best = null;
+  const served = new Map(); // N02 の会社 → [{ f, r }]
+  for (const feed of feeds) {
+    if (!feed || !feed.routes.some((r) => r.mode === 2)) continue;
+    const bb = feed.meta.bbox;
+    if (x < bb[0] - 0.01 || x > bb[2] + 0.01 || y < bb[1] - 0.01 || y > bb[3] + 0.01) continue;
+    const near = new Set();
+    for (let s = 0; s < feed.stopLat.length; s++) {
+      const dx = (feed.stopLon[s] - x) * 0.82, dy = feed.stopLat[s] - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > 0.0027 ** 2) continue;
+      near.add(s);
+      if (!best || d2 < best.d2) best = { f: feed.i, s, d2 };
+    }
+    if (!near.size) continue;
+    const routes = new Set();
+    for (const p of feed.pats) if (feed.routes[p.r].mode === 2) for (const s of p.s) if (near.has(s)) { routes.add(p.r); break; }
+    for (const [op] of st.lines) if (opServedBy(op, feed)) for (const r of routes) { if (!served.has(op)) served.set(op, []); served.get(op).push({ f: feed.i, r }); }
+  }
+  sel = null; selGeom = null; selTrip = null; selStop = null; panelArea = { station: true };
+  let h = `<h2><i class="sw" style="background:#ebf0f5;border:1px solid #888"></i>${esc(st.name)}駅</h2>`;
+  const ops = [...new Set(st.lines.map(([o]) => o))];
+  for (const op of ops) {
+    const ls = st.lines.filter(([o]) => o === op).map(([, l]) => l);
+    h += `<h3>${esc(op)}　${esc(ls.join('・'))}</h3>`;
+    const sv = served.get(op);
+    if (sv?.length) {
+      h += '<p class="note">時刻表どおりに列車を走らせています。</p><div class="rt-pick">';
+      const seen = new Set();
+      for (const { f, r } of sv) {
+        if (seen.has(`${f}:${r}`)) continue;
+        seen.add(`${f}:${r}`);
+        const rt = feeds[f].routes[r];
+        h += `<button type="button" data-route="${f}:${r}"><i class="sw" style="background:${rgbCss(rt.rgb)}"></i>${esc(routeName(rt))}</button>`;
+      }
+      h += '</div>';
+    } else {
+      const rs = railStatus[op];
+      const why = !rs ? '時刻表のオープンデータが見つかっていません（まだ詳しく調べていません）。'
+        : rs.status === 'prohibited' ? '時刻表は、公開元の利用規約や robots.txt で機械的な取得・加工が禁じられているため使っていません。'
+        : rs.status === 'unknown' ? '公開されている時刻表を使ってよいか規約から判断できないため、使っていません（会社への確認が必要）。'
+        : '時刻表は使ってよいと判断しましたが、まだ取り込めていません。';
+      h += `<p class="note"><b>列車を走らせていません。</b>${why}</p>`;
+      if (rs?.contact && rs.status !== 'prohibited') h += `<p class="note">問い合わせ先: ${/^https?:/.test(rs.contact) ? `<a href="${esc(rs.contact)}" target="_blank" rel="noopener">${esc(rs.contact)}</a>` : esc(rs.contact)}</p>`;
+    }
+  }
+  if (best && served.size) {
+    // 時刻表のある駅なら、この先の発車も出す
+    selStop = { f: best.f, s: best.s };
+    h += stopSection().replace(/<h2>.*?<\/h2>/, '').replace(/<p class="op">.*?<\/p>/, '');
+    selStop = null;
+  }
+  h += '<p class="note">駅の位置・名前・路線は国土数値情報（鉄道データ）です。</p>';
   $('panel').hidden = false;
   $('panelBody').innerHTML = h;
 }
@@ -709,6 +788,10 @@ function describe(info) {
     const m = trackMeta[info.object.li];
     return `<b>${esc(m.name)}</b><span>${esc(m.op)}　押すと列車の有無と理由が出ます</span>`;
   }
+  if (info.layer.id === 'stations' && info.object) {
+    const st = info.object;
+    return `<b>${esc(st.name)}駅</b><span>${esc([...new Set(st.lines.map(([o, l]) => l))].join('・'))}　押すと詳しく</span>`;
+  }
   if (info.layer.id === 'p11' && info.object) {
     return `<b>${esc(info.object.name)}</b><span>${esc(info.object.op)}　時刻表のデータがまだ無いバス停（押すと説明）</span>`;
   }
@@ -736,6 +819,7 @@ function onClick(info) {
   if (info.layer?.id === 'areas' && info.object) { showArea(info.object); return; }
   if (info.layer?.id === 'tracks' && info.object) { showTrack(info.object, info.coordinate); return; }
   if (info.layer?.id === 'p11' && info.object) { showP11(info.object); return; }
+  if (info.layer?.id === 'stations' && info.object) { showStation(info.object); return; }
   if ((info.layer?.id === 'stops' || info.layer?.id === 'selStops') && info.object) {
     const f = info.object.f ?? sel.f;
     selStop = { f, s: info.object.s };
@@ -768,11 +852,11 @@ function layers() {
   const z = map.getZoom();
   const out = [];
   const dim = !!sel;
+  const dark = theme === 'dark';
   if (routesLayerDirty && !routesPending) {
     routesPending = true;
     (window.requestIdleCallback ?? ((f) => setTimeout(f, 50)))(() => { routesPending = false; buildRouteLines(); }, { timeout: 500 });
   }
-  const dark = theme === 'dark';
   if (lineOn.track && trackLines.length) {
     // 線路は背景。新幹線は少し明るく
     out.push(new PathLayer({
@@ -871,6 +955,22 @@ function layers() {
       highlightColor: [255, 255, 255, 60],
       updateTriggers: { getFillColor: [pulse.toFixed(2), activeAreas.length], getLineColor: [activeAreas.length], getLineWidth: [activeAreas.length] },
     }));
+  }
+  if (lineOn.stops && stationView.length && z >= 10) {
+    // 全国の駅（時刻表の無い路線の駅も）。白い縁の四角っぽい点で、バス停より目立たせる
+    out.push(new ScatterplotLayer({
+      id: 'stations', data: stationView, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: z >= 14 ? 5.5 : z >= 12 ? 4.2 : 3,
+      getFillColor: dark ? [235, 240, 245, 230] : [40, 50, 60, 230], stroked: true, getLineColor: dark ? [20, 26, 34, 255] : [255, 255, 255, 255],
+      lineWidthUnits: 'pixels', getLineWidth: 1.5, pickable: true, autoHighlight: true, highlightColor: [255, 196, 0, 255],
+    }));
+    if (z >= 13.5) {
+      out.push(new TextLayer({
+        id: 'stationNames', data: stationView, getPosition: (d) => d.p, getText: (d) => d.name, characterSet: 'auto',
+        getSize: 12, getColor: dark ? [225, 232, 240] : [25, 30, 36], getPixelOffset: [0, -13], fontWeight: 700,
+        fontFamily: '"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif', outlineWidth: 3, outlineColor: dark ? [10, 14, 18, 255] : [255, 255, 255, 255],
+        fontSettings: { sdf: true },
+      }));
+    }
   }
   if (lineOn.stops && p11Pts.length && z >= 13) {
     // 全国のバス停（時刻表のデータが無いものも）。小さく淡く
