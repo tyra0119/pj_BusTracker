@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b14e9bc-2031';
-import { holidayName } from './holidays.mjs?v=b14e9bc-2031';
-import { Realtime } from './realtime.mjs?v=b14e9bc-2031';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=74075e3-2201';
+import { holidayName } from './holidays.mjs?v=74075e3-2201';
+import { Realtime } from './realtime.mjs?v=74075e3-2201';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=b14e9bc-2031', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=74075e3-2201', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -198,7 +198,9 @@ async function syncFeeds() {
       scheduleRebuild();
     }
   };
-  await Promise.all(Array.from({ length: MOBILE ? 3 : 6 }, step));
+  // 同時に取りに行く数。GitHub Pages は中継サーバーにファイルを 10 分しか置かず、しばらく誰も開かないと 1 ファイル 0.2 秒ほど
+  // 配信元まで取りに行く。同時 6 本では全国 955 ファイルに 30 秒近くかかった（2026-10-04）。取り込みは裏のスレッドで順に
+  await Promise.all(Array.from({ length: MOBILE ? 12 : 32 }, step));
   if (seq === loadSeq) {
     scheduleRebuild(true);
     if (MOBILE) $('load').textContent = `見ている範囲 ${fmt(feeds.filter(Boolean).length)} データ`;
