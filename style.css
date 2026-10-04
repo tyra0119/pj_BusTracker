@@ -90,7 +90,7 @@ body.hinting #rtChip button[aria-pressed="false"], body.hinting #lineChips butto
 #qres li:hover, #qres li.on { background: var(--btn-hover); }
 #qres li small { display: block; color: var(--muted); font-size: 11px; }
 #head .tools { display: flex; gap: 6px; padding: 6px; margin-left: auto; }
-.pop { position: fixed; top: 70px; right: 12px; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; z-index: 6; }
+.pop { position: fixed; top: 70px; right: 12px; max-width: calc(100vw - 16px); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; z-index: 7; }
 .pop[hidden] { display: none; }
 .pop label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 

@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=38232fa-0918';
-import { holidayName } from './holidays.mjs?v=38232fa-0918';
-import { Realtime } from './realtime.mjs?v=38232fa-0918';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=7a6a750-0920';
+import { holidayName } from './holidays.mjs?v=7a6a750-0920';
+import { Realtime } from './realtime.mjs?v=7a6a750-0920';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=38232fa-0918', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=7a6a750-0920', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1297,7 +1297,18 @@ addEventListener('keydown', (e) => {
 });
 
 // 表示の設定
-$('btnSettings').onclick = () => { const p = $('settings'); p.hidden = !p.hidden; $('btnSettings').setAttribute('aria-expanded', String(!p.hidden)); };
+// 「表示」の設定欄は、ボタンのすぐ下に右端をそろえて開く（決まった高さに出していて、上の欄が折り返すとボタンに重なった）
+function placeSettings() {
+  const p = $('settings');
+  if (p.hidden) return;
+  const r = $('btnSettings').getBoundingClientRect();
+  // スマホでは地図のボタンがすぐ下に横一列に並ぶので、その下に
+  const tr = innerWidth < 760 ? document.querySelector('.maplibregl-ctrl-top-right') : null;
+  p.style.top = `${Math.round(Math.max(r.bottom, tr ? tr.getBoundingClientRect().bottom : 0) + 6)}px`;
+  p.style.right = `${Math.max(8, Math.round(innerWidth - r.right))}px`;
+}
+$('btnSettings').onclick = () => { const p = $('settings'); p.hidden = !p.hidden; $('btnSettings').setAttribute('aria-expanded', String(!p.hidden)); placeSettings(); };
+addEventListener('resize', placeSettings);
 $('trailLen').onchange = (e) => { trailLen = +e.target.value; trails.dirty = true; };
 // 乗り物の札（数を出しつつ、押すと表示を切り替える）
 function renderChips() {
