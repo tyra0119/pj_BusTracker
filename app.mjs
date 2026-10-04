@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=74075e3-2201';
-import { holidayName } from './holidays.mjs?v=74075e3-2201';
-import { Realtime } from './realtime.mjs?v=74075e3-2201';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=47100ec-2209';
+import { holidayName } from './holidays.mjs?v=47100ec-2209';
+import { Realtime } from './realtime.mjs?v=47100ec-2209';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -106,14 +106,20 @@ function goNow() {
 }
 
 // ---------- データ読み込み ----------
-// パソコン: 全国分を近い順に全部読む。スマホ: 見ている範囲（少し広め）のデータだけを、合計の大きさに上限を設けて読み、
+// パソコン: 全国分を全部読む。スマホ: 見ている範囲（少し広め）のデータだけを、合計の大きさに上限を設けて読み、
 // 地図を動かしたら足りない分を読み、範囲から外れたものは手放す（全国 54 MB を一度に読むとスマホでは重い。2026-10-03）
+// 読む単位は、近い場所のフィードをまとめたファイル（data/b/<k>.json、全国で 74 個。scripts/build-bundles.mjs）。
+// フィードごとの 955 ファイルだと、GitHub Pages の中継サーバーにファイルが無いとき（しばらく誰も開かないと 10 分で消える）
+// 1 ファイル約 0.2 秒かかり、全国分に 8〜30 秒かかった（2026-10-04）
 const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
-let loadedBytes = 0, loadSeq = 0;
-const loadingNow = new Set();
+let loadSeq = 0;
+let units = [];               // まとまり { k, ids, bbox, size, trips }
+const unitLoaded = new Set(); // 読み込んだまとまりの k
+const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
   const res = await fetch('./data/index.json?v=202610040013');
   index = await res.json();
+  units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
   await syncFeeds();
   if (!MOBILE) $('load').textContent = `${fmt(index.feeds.length)} のデータ・${fmt(index.feeds.reduce((s, m) => s + m.trips, 0))} 便`;
@@ -126,81 +132,92 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=74075e3-2201', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=47100ec-2209', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
   }
 } catch { /* Worker が使えない */ }
-function fetchFeed(m) {
-  const url = new URL(`./data/f/${m.i}.json?v=202610040013`, location.href).href;
+/** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
+function fetchUnit(u) {
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610040013`, location.href).href;
+  const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
-  if (!w) return fetch(url).then((r) => r.json());
+  if (!w) return plain();
   const id = ++reqId;
   return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); w.postMessage({ id, url }); })
-    .catch(() => fetch(url).then((r) => r.json())); // Worker で失敗したら画面側で
+    .catch(plain); // Worker で失敗したら画面側で
+}
+function dropUnit(u) {
+  for (const i of u.ids) {
+    const f = feeds[i];
+    if (!f) continue;
+    if (sel?.f === i || selStop?.f === i) clearSelection();
+    feeds[i] = undefined; schedule.feeds[i] = undefined;
+  }
+  unitLoaded.delete(u.k);
 }
 async function syncFeeds() {
   if (!index) return;
   const seq = ++loadSeq;
   const c = map.getCenter();
   const dist = (m) => { const x = (m.bbox[0] + m.bbox[2]) / 2 - c.lng, y = (m.bbox[1] + m.bbox[3]) / 2 - c.lat; return x * x + y * y; };
-  let list = [...index.feeds].sort((a, b) => dist(a) - dist(b));
+  let list = [...units].sort((a, b) => dist(a) - dist(b));
   if (MOBILE) {
     const v = viewBounds(0.5);
-    const inView = list.filter((m) => boxHit(m.bbox, v));
+    const inView = list.filter((u) => boxHit(u.bbox, v));
     // 見ている範囲で、まだ読んでいないもの（近い順）を予算まで足す。
     // 読んだものは予算を超えるまで手放さない（拡大・縮小のたびに手放して読み直すと、そのたびに固まった。2026-10-04）
-    const want = new Set(inView.map((m) => m.i));
+    const want = new Set(inView.map((u) => u.k));
     let bytes = 0;
     const add = [];
-    for (const m of inView) { if (bytes + m.size > BUDGET && add.length) break; bytes += m.size; add.push(m.i); }
-    let held = feeds.filter(Boolean).reduce((t, f) => t + f.meta.size, 0) + add.filter((i) => !feeds[i]).reduce((t, i) => t + index.feeds[i].size, 0);
+    for (const u of inView) { if (bytes + u.size > BUDGET && add.length) break; bytes += u.size; add.push(u.k); }
+    const byK = new Map(units.map((u) => [u.k, u]));
+    let held = [...unitLoaded].reduce((t, k) => t + byK.get(k).size, 0) + add.filter((k) => !unitLoaded.has(k)).reduce((t, k) => t + byK.get(k).size, 0);
     let dropped = 0;
     if (held > BUDGET) {
       // 見ている範囲の外を、中心から遠い順に手放す
-      const far = feeds.filter((f) => f && !want.has(f.i)).sort((a, b) => dist(b.meta) - dist(a.meta));
-      for (const f of far) {
+      const far = [...unitLoaded].map((k) => byK.get(k)).filter((u) => !want.has(u.k)).sort((a, b) => dist(b) - dist(a));
+      for (const u of far) {
         if (held <= BUDGET) break;
-        if (sel?.f === f.i || selStop?.f === f.i) clearSelection();
-        held -= f.meta.size; feeds[f.i] = undefined; schedule.feeds[f.i] = undefined; dropped++;
+        held -= u.size; dropUnit(u); dropped++;
       }
     }
     if (dropped) scheduleRebuild(true); // 手放したフィードの便を一覧に残さない（残ると毎フレームの更新が止まっていた）
-    list = list.filter((m) => add.includes(m.i));
+    list = list.filter((u) => add.includes(u.k));
     const partial = add.length < inView.length;
-    $('load').textContent = `見ている範囲 ${fmt(want.size)} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
+    $('load').textContent = `見ている範囲 ${fmt(inView.reduce((t, u) => t + u.ids.length, 0))} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
   }
-  const queue = list.filter((m) => !feeds[m.i] && !loadingNow.has(m.i));
-  // 広く見ているとき（縮尺 9 未満）は、便の多いデータから読む（近い順だと、全国表示では中心の小さなデータが先で、
+  const queue = list.filter((u) => !unitLoaded.has(u.k) && !loadingNow.has(u.k));
+  // 広く見ているとき（縮尺 9 未満）は、便の多いまとまりから読む（近い順だと、全国表示では中心の小さなデータが先で、
   // 東京・大阪などの光が最後まで出なかった。2026-10-04）。拡大しているときは近い順のまま
   if (map.getZoom() < 9) queue.sort((a, b) => b.trips - a.trips);
-  const total = queue.length;
+  const total = queue.reduce((t, u) => t + u.ids.length, 0);
   let done = 0;
   const step = async () => {
     while (queue.length && seq === loadSeq) {
-      const m = queue.shift();
-      loadingNow.add(m.i);
+      const u = queue.shift();
+      loadingNow.add(u.k);
       try {
-        const raw = await fetchFeed(m);
+        const raws = await fetchUnit(u);
         if (MOBILE && seq !== loadSeq) continue; // 待つ間に地図が動いた
-        const f = new Feed(m, raw);
-        feeds[m.i] = f;
-        schedule.addFeed(f);
-        loadedBytes += m.size;
+        u.ids.forEach((i, n) => {
+          if (feeds[i] || !raws[n]) return;
+          try { const f = new Feed(index.feeds[i], raws[n]); feeds[i] = f; schedule.addFeed(f); } catch (e) { console.warn('feed', i, e); }
+        });
+        unitLoaded.add(u.k);
         if (MOBILE) await new Promise((r) => requestAnimationFrame(() => r()));
-      } catch (e) { console.warn('feed', m.i, e); } finally { loadingNow.delete(m.i); }
-      done++;
-      if (!MOBILE || total > 3) $('load').textContent = `データ ${done} / ${total}`;
+      } catch (e) { console.warn('bundle', u.k, e); } finally { loadingNow.delete(u.k); }
+      done += u.ids.length;
+      $('load').textContent = `データ ${fmt(done)} / ${fmt(total)}`;
       // 読み込みの途中も便の一覧を作り直して、読めた所から走らせる（3 秒に 1 回まで）。
       // スマホは地図を動かしている最中には作り直さない（拡大・縮小の引っかかりになっていた）。以前は最初の 1 件と読み終わったときだけで、
       // 開いてから 10 秒ほど数台しか走らなかった（2026-10-04）
       scheduleRebuild();
     }
   };
-  // 同時に取りに行く数。GitHub Pages は中継サーバーにファイルを 10 分しか置かず、しばらく誰も開かないと 1 ファイル 0.2 秒ほど
-  // 配信元まで取りに行く。同時 6 本では全国 955 ファイルに 30 秒近くかかった（2026-10-04）。取り込みは裏のスレッドで順に
-  await Promise.all(Array.from({ length: MOBILE ? 12 : 32 }, step));
+  // 同時に取りに行く数（まとまりは全国で 74 個）
+  await Promise.all(Array.from({ length: MOBILE ? 6 : 16 }, step));
   if (seq === loadSeq) {
     scheduleRebuild(true);
     if (MOBILE) $('load').textContent = `見ている範囲 ${fmt(feeds.filter(Boolean).length)} データ`;
