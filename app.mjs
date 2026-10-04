@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=dee2c4b-2021';
-import { holidayName } from './holidays.mjs?v=dee2c4b-2021';
-import { Realtime } from './realtime.mjs?v=dee2c4b-2021';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1c61d91-2027';
+import { holidayName } from './holidays.mjs?v=1c61d91-2027';
+import { Realtime } from './realtime.mjs?v=1c61d91-2027';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=dee2c4b-2021', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=1c61d91-2027', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -802,11 +802,17 @@ $('panelClose').onclick = clearSelection;
 
 // ---------- ホバー・クリック ----------
 const tip = $('tip');
+// 吹き出しはマウスを乗せたときの案内。指で触ったときは出さない（タップの直後にも「乗せた」扱いの呼び出しが来て、
+// 選んだあとに吹き出しがまた出て情報欄に重なった。2026-10-04）
+let touchedAt = 0;
+addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') { touchedAt = Date.now(); tip.hidden = true; } }, true);
+map.on('movestart', () => { tip.hidden = true; });
 function onHover(info) {
   map.getCanvas().style.cursor = info.object || (info.layer?.id === 'buses' && info.index >= 0) ? 'pointer' : '';
-  const o = describe(info);
   const hr = info.layer?.id === 'routes' && info.object ? { f: info.object.f, r: info.object.r } : null;
   if ((hr?.f !== hoverRoute?.f) || (hr?.r !== hoverRoute?.r)) hoverRoute = hr;
+  if (Date.now() - touchedAt < 1500) { tip.hidden = true; return; }
+  const o = describe(info);
   if (!o) { tip.hidden = true; return; }
   tip.innerHTML = o;
   tip.hidden = false;
