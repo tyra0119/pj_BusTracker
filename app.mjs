@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=47100ec-2209';
-import { holidayName } from './holidays.mjs?v=47100ec-2209';
-import { Realtime } from './realtime.mjs?v=47100ec-2209';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=225b06e-2225';
+import { holidayName } from './holidays.mjs?v=225b06e-2225';
+import { Realtime } from './realtime.mjs?v=225b06e-2225';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -91,7 +91,7 @@ const modeOn = [true, true, true, true];
 try { const v = JSON.parse(localStorage.getItem('bt.modes')); if (Array.isArray(v) && v.length === 4) v.forEach((x, i) => { modeOn[i] = !!x; }); } catch { /* 使えなくてもよい */ }
 const kindOk = (rt) => modeOn[rt.mode];
 let sel = null;            // 選んだ系統 { f, r, key }
-let selTrip = null;        // 選んだ便 { f, k }（フィードと便番号。日をまたいでも同じ便を指す）
+let selTrip = null;        // 選んだ便 { f, k, at }（フィード・便番号・出発の日時。日をまたいでも同じ回の便を指す）
 let selStop = null;        // 選んだ停留所 { f, s }
 let follow = false;
 let hoverRoute = null;     // ホバー中の路線 { f, r }
@@ -132,7 +132,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=47100ec-2209', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=225b06e-2225', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -704,7 +704,15 @@ function routeTrips(f, r) {
   }
   return out;
 }
-function findTripIndex(f, k) {
+// 選んだ便を、いまの便の一覧から探す。同じ便（f, k）は、その日の便と前日の便（−24 時間）の 2 回入ることがあるので、
+// 選んだときの出発の日時（at = 日 × 86400 + 出発の秒）で同じ回を探す。日付をまたぐと、前日 22:40 発の夜行バスを
+// 追いかけているのに、その日の 22:40 発（まだ出ていない）を選んで追いかけが外れていた（シルクライナー。2026-10-04）
+function findTripIndex(f, k, at) {
+  if (at != null) {
+    const ts = at - schedule.day * 86400;
+    for (let j = 0; j < schedule.n; j++) if (schedule.tf[j] === f && schedule.ti[j] === k && schedule.ts[j] === ts) return j;
+  }
+  for (let j = 0; j < schedule.n; j++) if (schedule.tf[j] === f && schedule.ti[j] === k && schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) return j;
   for (let j = 0; j < schedule.n; j++) if (schedule.tf[j] === f && schedule.ti[j] === k && schedule.ts[j] >= 0) return j;
   for (let j = 0; j < schedule.n; j++) if (schedule.tf[j] === f && schedule.ti[j] === k) return j;
   return -1;
@@ -774,7 +782,7 @@ function routeSection() {
   if (own.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...(day.length ? day : own)))} 〜 ${late(Math.max(...own))} 発</dd>`;
   h += '</dl>';
   // 「追う」は、選んだ便がいま走っているときだけ（終点に着いた・まだ出ていない便は追えない）
-  const tj = selTrip ? findTripIndex(selTrip.f, selTrip.k) : -1;
+  const tj = selTrip ? findTripIndex(selTrip.f, selTrip.k, selTrip.at) : -1;
   const tripRunning = tj >= 0 && schedule.ts[tj] <= clock.t && schedule.te[tj] >= clock.t;
   h += `<div class="act"><button type="button" data-act="fit">この${W.line}に寄る</button>${tripRunning ? `<button type="button" data-act="follow" aria-pressed="${follow}">${follow ? `追いかけ中（押すとやめる）` : `この${W.v}を追う`}</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
   if (selTrip) h += tripSection();
@@ -792,7 +800,7 @@ function routeSection() {
   return h;
 }
 function tripSection() {
-  const j = findTripIndex(selTrip.f, selTrip.k);
+  const j = findTripIndex(selTrip.f, selTrip.k, selTrip.at);
   if (j < 0) return '<p class="note">選んだ便は、この日は走りません。</p>';
   const { feed, pat, prof, start, end } = schedule.tripInfo(j);
   const t = clock.t;
@@ -818,7 +826,7 @@ $('panelBody').addEventListener('click', (e) => {
   else if (b.dataset.act === 'close') clearSelection();
   else if (b.dataset.act === 'rtfollow' && rtPanel) { rtFollow = rtFollow === rtPanel.key ? null : rtPanel.key; showRtVehicle(rtData.find((x) => x.key === rtPanel.key) ?? rtPanel, true); }
   else if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { rtFollow = null; }
-  if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { const { feed, pat } = schedule.tripInfo(rtPanel.j); selTrip = { f: feed.i, k: schedule.ti[rtPanel.j] }; selectRoute(feed.i, pat.r, { keepTrip: true }); }
+  if (b.dataset.act === 'rtroute' && rtPanel?.j >= 0) { const { feed, pat } = schedule.tripInfo(rtPanel.j); selTrip = { f: feed.i, k: schedule.ti[rtPanel.j], at: schedule.day * 86400 + schedule.ts[rtPanel.j] }; selectRoute(feed.i, pat.r, { keepTrip: true }); }
 });
 $('panelClose').onclick = clearSelection;
 
@@ -885,7 +893,7 @@ function onClick(info) {
     const j = runIdx[info.index];
     const fi = schedule.tf[j], k = schedule.ti[j];
     const feed = feeds[fi], pat = feed.pats[feed.trips[k * 4]];
-    selTrip = { f: fi, k };
+    selTrip = { f: fi, k, at: schedule.day * 86400 + schedule.ts[j] };
     selectRoute(fi, pat.r, { keepTrip: true });
     return;
   }
@@ -1217,7 +1225,7 @@ function layers() {
     }
   }
   if (selTrip) {
-    const j = findTripIndex(selTrip.f, selTrip.k);
+    const j = findTripIndex(selTrip.f, selTrip.k, selTrip.at);
     if (j >= 0 && schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) {
       const p = [0, 0, 0];
       schedule.position(j, clock.t, p);
@@ -1248,7 +1256,7 @@ function leaveLive() {
   if (j >= 0) {
     // 早送り・時刻の移動では実際の位置は出せないので、同じ便の時刻表どおりの動きに切り替えて追いかけ続ける
     const { feed, pat } = schedule.tripInfo(j);
-    selTrip = { f: feed.i, k: schedule.ti[j] };
+    selTrip = { f: feed.i, k: schedule.ti[j], at: schedule.day * 86400 + schedule.ts[j] };
     follow = following;
     selectRoute(feed.i, pat.r, { keepTrip: true });
   } else clearSelection();
