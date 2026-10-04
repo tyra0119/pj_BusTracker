@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=00e1ca3-0936';
-import { holidayName } from './holidays.mjs?v=00e1ca3-0936';
-import { Realtime } from './realtime.mjs?v=00e1ca3-0936';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bf7a43c-1931';
+import { holidayName } from './holidays.mjs?v=bf7a43c-1931';
+import { Realtime } from './realtime.mjs?v=bf7a43c-1931';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=00e1ca3-0936', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=bf7a43c-1931', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -172,6 +172,9 @@ async function syncFeeds() {
     $('load').textContent = `見ている範囲 ${fmt(want.size)} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
   }
   const queue = list.filter((m) => !feeds[m.i] && !loadingNow.has(m.i));
+  // 広く見ているとき（縮尺 9 未満）は、便の多いデータから読む（近い順だと、全国表示では中心の小さなデータが先で、
+  // 東京・大阪などの光が最後まで出なかった。2026-10-04）。拡大しているときは近い順のまま
+  if (map.getZoom() < 9) queue.sort((a, b) => b.trips - a.trips);
   const total = queue.length;
   let done = 0;
   const step = async () => {
@@ -189,8 +192,10 @@ async function syncFeeds() {
       } catch (e) { console.warn('feed', m.i, e); } finally { loadingNow.delete(m.i); }
       done++;
       if (!MOBILE || total > 3) $('load').textContent = `データ ${done} / ${total}`;
-      // スマホは読み込みの途中で便の一覧を作り直さない（最初の 1 件と、読み終わったときだけ）。途中の作り直しが拡大・縮小の引っかかりになっていた
-      if (!MOBILE || !schedule.n) scheduleRebuild();
+      // 読み込みの途中も便の一覧を作り直して、読めた所から走らせる（3 秒に 1 回まで）。
+      // スマホは地図を動かしている最中には作り直さない（拡大・縮小の引っかかりになっていた）。以前は最初の 1 件と読み終わったときだけで、
+      // 開いてから 10 秒ほど数台しか走らなかった（2026-10-04）
+      scheduleRebuild();
     }
   };
   await Promise.all(Array.from({ length: MOBILE ? 3 : 6 }, step));
@@ -205,7 +210,11 @@ function scheduleRebuild(now) {
   if (now) { clearTimeout(rebuildTimer); rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); return; }
   if (rebuildTimer) return;
   const wait = Math.max(50, lastRebuild + 3000 - Date.now());
-  rebuildTimer = setTimeout(() => { rebuildTimer = null; lastRebuild = Date.now(); rebuildDay(); }, wait);
+  const fire = () => {
+    if (MOBILE && map.isMoving()) { rebuildTimer = setTimeout(fire, 400); return; } // 動かし終わってから
+    rebuildTimer = null; lastRebuild = Date.now(); rebuildDay();
+  };
+  rebuildTimer = setTimeout(fire, wait);
 }
 function rebuildDay() {
   schedIndex = null;
@@ -1552,12 +1561,15 @@ function renderSources() {
 }
 
 // ---------- 開始 ----------
+// 時刻表のデータは、地図（背景）の読み込みを待たずにすぐ読み始める（以前は地図の読み込みが終わってからで、スマホでは 3 秒ほど遅れた。2026-10-04）
+goNow();
+const loading = loadAll().catch((e) => { $('load').textContent = 'データを読み込めませんでした'; console.error(e); });
+// 線路・駅・実際の位置の対応表は、札がオフの初期表示では使わない。スマホでは時刻表のデータの取得と回線を取り合わないよう後から
+if (MOBILE) Promise.race([loading, new Promise((r) => setTimeout(r, 5000))]).then(loadStatic);
+else loadStatic();
 map.on('load', () => {
-  goNow();
   syncControls();
   requestAnimationFrame(frame);
-  loadStatic();
-  loadAll().catch((e) => { $('load').textContent = 'データを読み込めませんでした'; console.error(e); });
 });
 // 確認用（開発者ツールから状態を見る）
 window.__bt = { map, schedule, clock, trails, feeds, buildTrails, perf, overlay };
