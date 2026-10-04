@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1c61d91-2027';
-import { holidayName } from './holidays.mjs?v=1c61d91-2027';
-import { Realtime } from './realtime.mjs?v=1c61d91-2027';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b14e9bc-2031';
+import { holidayName } from './holidays.mjs?v=b14e9bc-2031';
+import { Realtime } from './realtime.mjs?v=b14e9bc-2031';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=1c61d91-2027', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=b14e9bc-2031', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -754,7 +754,10 @@ function routeSection() {
   const late = (sec) => (sec >= 86400 ? `翌 ${hhmm(sec)}` : hhmm(sec));
   if (own.length) h += `<dt>始発・最終</dt><dd>${hhmm(Math.min(...(day.length ? day : own)))} 〜 ${late(Math.max(...own))} 発</dd>`;
   h += '</dl>';
-  h += `<div class="act"><button type="button" data-act="fit">この${W.line}に寄る</button>${selTrip ? `<button type="button" data-act="follow" aria-pressed="${follow}">この${W.v}を追う</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
+  // 「追う」は、選んだ便がいま走っているときだけ（終点に着いた・まだ出ていない便は追えない）
+  const tj = selTrip ? findTripIndex(selTrip.f, selTrip.k) : -1;
+  const tripRunning = tj >= 0 && schedule.ts[tj] <= clock.t && schedule.te[tj] >= clock.t;
+  h += `<div class="act"><button type="button" data-act="fit">この${W.line}に寄る</button>${tripRunning ? `<button type="button" data-act="follow" aria-pressed="${follow}">${follow ? `追いかけ中（押すとやめる）` : `この${W.v}を追う`}</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
   if (selTrip) h += tripSection();
   // 行先ごとの便数
   const byHead = new Map();
@@ -970,7 +973,9 @@ function showRtVehicle(o, keepFollow) {
   }
   const at = o.v.ts ? new Date(o.v.ts * 1000 + 9 * 3600e3).toISOString().slice(11, 19) : '—';
   h += `<dt>位置の時刻</dt><dd>${at}</dd>${o.v.label ? `<dt>車両</dt><dd>${esc(o.v.label)}</dd>` : ''}</dl>`;
-  h += `<div class="act"><button type="button" data-act="rtfollow" aria-pressed="${rtFollow === o.key}">${rtFollow === o.key ? '追いかけ中（押すとやめる）' : 'この車両を追いかける'}</button>${o.j >= 0 ? `<button type="button" data-act="rtroute">この${o.rail ? '路線' : '系統'}を見る</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
+  const gone = !rtData.some((x) => x.key === o.key);
+  if (gone) h += `<p class="note" style="margin-top:0">この車両の位置が届かなくなりました（運行を終えたか、配信が途絶えました）。追いかけるのをやめました。</p>`;
+  h += `<div class="act">${gone ? '' : `<button type="button" data-act="rtfollow" aria-pressed="${rtFollow === o.key}">${rtFollow === o.key ? '追いかけ中（押すとやめる）' : 'この車両を追いかける'}</button>`}${o.j >= 0 ? `<button type="button" data-act="rtroute">この${o.rail ? '路線' : '系統'}を見る</button>` : ''}<button type="button" data-act="close">閉じる</button></div>`;
   h += `<p class="note">実際の位置は、公共交通オープンデータセンターが配信する GTFS リアルタイム（車両位置）を中継サーバ経由で 30 秒ごとに読んだものです。${o.j >= 0 && o.delay != null ? '次の位置が届くまでは、測った位置から求めた遅れの分だけ時刻表に沿って動かしています（届いたら補正）。' : ''}細い線の先が、同じ便の時刻表どおりの位置です。遅れは、実際の位置を時刻表で通る時刻と比べた目安です。地図を手で動かすと追いかけるのをやめます。</p>`;
   $('panel').hidden = false;
   $('panelBody').innerHTML = h;
@@ -1199,6 +1204,10 @@ function layers() {
       schedule.position(j, clock.t, p);
       out.push(new ScatterplotLayer({ id: 'selBus', data: [p], getPosition: (d) => [d[0], d[1]], radiusUnits: 'pixels', getRadius: 9, getFillColor: [...selGeom.c, 255], stroked: true, getLineColor: [255, 255, 255], lineWidthUnits: 'pixels', getLineWidth: 3 }));
       if (follow) followTo(p[0], p[1]);
+    } else if (follow) {
+      // 追っている便が終点に着いた（または時刻を戻して、まだ出ていない）: 追いかけるのをやめる（2026-10-04）
+      follow = false;
+      refreshPanel();
     }
   }
   return out;
@@ -1257,6 +1266,8 @@ function frameBody(now) {
     $('nRun').textContent = fmt(nView);
     if (now - rtTick > 1000) {
       rtTick = now; updateRealtime();
+      // 追っている車両の位置が届かなくなった（運行を終えた・配信が途絶えた）: 追いかけるのをやめる（2026-10-04）
+      if (rtFollow && !rtData.some((x) => x.key === rtFollow)) { const gone = rtFollow; rtFollow = null; if (panelArea?.rt && rtPanel?.key === gone) showRtVehicle(rtPanel, true); }
       if (panelArea?.rt && rtPanel && now - rtPanelAt > 5000) { const d = rtData.find((x) => x.key === rtPanel.key); if (d) showRtVehicle(d, true); }
     }
     $('nAllRun').textContent = fmt(nModeAll.reduce((a, x, i) => a + (modeOn[i] ? x : 0), 0)); // 画面の中の数と同じく、表示中の乗り物すべて（デマンド交通の車両も）
