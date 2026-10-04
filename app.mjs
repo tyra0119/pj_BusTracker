@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bf7a43c-1931';
-import { holidayName } from './holidays.mjs?v=bf7a43c-1931';
-import { Realtime } from './realtime.mjs?v=bf7a43c-1931';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=dee2c4b-2021';
+import { holidayName } from './holidays.mjs?v=dee2c4b-2021';
+import { Realtime } from './realtime.mjs?v=dee2c4b-2021';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=bf7a43c-1931', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=dee2c4b-2021', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1376,16 +1376,36 @@ $('btnSources').onclick = () => $('dlgSources').showModal();
 $('btnHelp').onclick = () => $('dlgHelp').showModal();
 map.on('zoomend', () => { routesLayerDirty = true; });
 // 追いかける: 地図の中心を車両に合わせる。拡大・縮小・回転の動きのあいだは合わせ直さない（毎フレーム合わせると拡大・縮小が打ち消された）
+// スマホでは情報欄が地図の下半分を覆うので、情報欄の上に見えている地図の真ん中に車両を置く（地図の padding。
+// 画面の真ん中に置いていて、情報欄の裏に隠れて見えなかった。2026-10-04）
+const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
+function followPadding() {
+  if (innerWidth >= 760 || $('panel').hidden) return NO_PAD;
+  const cr = map.getCanvas().getBoundingClientRect(), pr = $('panel').getBoundingClientRect();
+  const tr = document.querySelector('.maplibregl-ctrl-top-right')?.getBoundingClientRect();
+  const top = Math.max(0, Math.round((tr ? tr.bottom : $('head').getBoundingClientRect().bottom) - cr.top));
+  const bottom = Math.max(0, Math.round(cr.bottom - pr.top));
+  return top + bottom > cr.height - 80 ? NO_PAD : { top, bottom, left: 0, right: 0 };
+}
+const hasPad = () => { const q = map.getPadding(); return q.top || q.bottom || q.left || q.right; };
 function followTo(lon, lat) {
   if (map.isZooming() || map.isRotating()) return;
-  map.jumpTo({ center: [lon, lat] });
+  map.jumpTo({ center: [lon, lat], padding: followPadding() });
+}
+// 追いかけるのをやめたら padding を戻す。見えている範囲は動かさない（画面の真ん中の地点を、padding 0 の中心にする）
+function releaseFollowPadding() {
+  if (!hasPad() || map.isMoving()) return;
+  const c = map.getCanvas();
+  map.jumpTo({ center: map.unproject([c.clientWidth / 2, c.clientHeight / 2]), padding: NO_PAD });
 }
 // 追いかけているあいだは、ホイール・ピンチの拡大・縮小を画面の中心（＝車両）を基準にする
 let followZoomMode = false;
 function syncFollowZoom() {
   const on = !!(rtFollow || follow);
+  if (!on) releaseFollowPadding();
   if (on === followZoomMode) return;
   followZoomMode = on;
+  placePanel(); // スマホでは追いかけるあいだ情報欄を低く
   const around = on ? 'center' : undefined;
   map.scrollZoom.disable(); map.scrollZoom.enable(around ? { around } : undefined);
   map.touchZoomRotate.disable(); map.touchZoomRotate.enable(around ? { around } : undefined);
@@ -1454,7 +1474,11 @@ function placePanel() {
   if (narrow) {
     // スマホ: 地図のボタン（横一列）の下から、下の欄の上まで
     const top = Math.ceil(Math.max(ctrlBottom, head.bottom) + 8);
-    p.top = ''; p.bottom = `${gapBottom}px`; p.maxHeight = `${Math.max(120, innerHeight - gapBottom - top)}px`;
+    // 高さは画面の 45% まで。追いかけているあいだは、上の欄と下の欄のあいだの地図の 4 割まで（残りの地図の真ん中に車両を置く。
+    // スマホは上下の欄で画面の 6 割近くを使うので、情報欄がその間をほぼ覆い、追いかける車両が見えなかった。2026-10-04）
+    const avail = innerHeight - gapBottom - top;
+    const h = rtFollow || follow ? Math.max(110, Math.round(avail * 0.4)) : Math.max(120, Math.min(avail, Math.round(innerHeight * 0.45)));
+    p.top = ''; p.bottom = `${gapBottom}px`; p.maxHeight = `${h}px`;
   } else {
     // パソコン: 上の欄の下から、下の欄の上まで。右の地図のボタンを隠さないよう、ボタンの幅だけ左に寄せる
     const top = Math.ceil(head.bottom + 8);
