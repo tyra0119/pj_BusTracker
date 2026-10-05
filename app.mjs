@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=621e7bb-1231';
-import { holidayName } from './holidays.mjs?v=621e7bb-1231';
-import { Realtime } from './realtime.mjs?v=621e7bb-1231';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=41017b6-1250';
+import { holidayName } from './holidays.mjs?v=41017b6-1250';
+import { Realtime } from './realtime.mjs?v=41017b6-1250';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -197,7 +197,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=621e7bb-1231', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=41017b6-1250', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -463,7 +463,8 @@ function buildBusLines() {
   // 範囲は少し広めに取り、そこから出たときだけ作り直す
   const v = viewBounds(0);
   const inside = busLinesBounds && v[0] >= busLinesBounds[0] && v[1] >= busLinesBounds[1] && v[2] <= busLinesBounds[2] && v[3] <= busLinesBounds[3];
-  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}|${lineOn.busline}|${lineOn.hwline}|${gap}`;
+  // 乗り物の札（路線バス・高速バス）をオフにしても線は出す（線路が鉄道の札に関係なく出るのとそろえる。利用者の指定。2026-10-05）
+  const key = `${schedule.day}|${lastRebuild}|${lineOn.busline}|${lineOn.hwline}|${gap}`;
   if (!(key === busLinesKey && inside)) {
     busLinesKey = key;
     busLinesBounds = viewBounds(0.6);
@@ -488,8 +489,8 @@ function buildBusLines() {
     }
     return { type: 'FeatureCollection', features };
   };
-  lineFC.bus = lineOn.busline && modeOn[0] ? fc((m) => m === 0) : EMPTY_FC;
-  lineFC.hw = lineOn.hwline && modeOn[1] ? fc((m) => m === 1) : EMPTY_FC;
+  lineFC.bus = lineOn.busline ? fc((m) => m === 0) : EMPTY_FC;
+  lineFC.hw = lineOn.hwline ? fc((m) => m === 1) : EMPTY_FC;
   map.getSource('bt-buslines')?.setData(lineFC.bus);
   map.getSource('bt-hwlines')?.setData(lineFC.hw);
   perf.log.push(['buslines', Math.round(performance.now() - lineJob.t0)]);
@@ -527,9 +528,10 @@ function syncMapLines(dim) {
   if (dim !== mapLinesDim) {
     mapLinesDim = dim;
     const dark = theme === 'dark';
-    map.setPaintProperty('bt-tracks', 'line-opacity', dim ? 0.35 : ['case', ['==', ['get', 'kind'], 1], 0.92, dark ? 0.78 : 0.82]);
-    map.setPaintProperty('bt-buslines', 'line-opacity', dim ? (dark ? 0.03 : 0.05) : (dark ? 0.07 : 0.12));
-    map.setPaintProperty('bt-hwlines', 'line-opacity', dim ? (dark ? 0.08 : 0.12) : (dark ? 0.25 : 0.4));
+    map.setPaintProperty('bt-tracks', 'line-opacity', ['case', ['==', ['get', 'kind'], 1], 0.92 * (dim ? 0.7 : 1), (dark ? 0.78 : 0.82) * (dim ? 0.7 : 1)]);
+    // 系統を選んでいるときの暗くし方は、線路・路線バス・高速バスで同じ割合（約 7 割）に。以前はバスの路線が 0.03 まで下がり、ほぼ見えなくなった
+    map.setPaintProperty('bt-buslines', 'line-opacity', (dark ? 0.07 : 0.12) * (dim ? 0.7 : 1));
+    map.setPaintProperty('bt-hwlines', 'line-opacity', (dark ? 0.25 : 0.4) * (dim ? 0.7 : 1));
   }
   const hl = hoverRoute ? `${hoverRoute.f}:${hoverRoute.r}` : '';
   if (hl !== mapLinesHl) {
