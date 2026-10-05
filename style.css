@@ -97,6 +97,7 @@ body.hinting #rtChip button[aria-pressed="false"], body.hinting #lineChips butto
 .pop[hidden] { display: none; }
 .pop label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .pop label[hidden] { display: none; }
+.pop label.check { display: flex; gap: 6px; align-items: center; color: var(--fg, inherit); max-width: 260px; line-height: 1.4; }
 .pop input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* 右の情報欄 */

@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=aef2a7b-1207';
-import { holidayName } from './holidays.mjs?v=aef2a7b-1207';
-import { Realtime } from './realtime.mjs?v=aef2a7b-1207';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=6a1454c-1226';
+import { holidayName } from './holidays.mjs?v=6a1454c-1226';
+import { Realtime } from './realtime.mjs?v=6a1454c-1226';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -67,6 +67,36 @@ function applyOverlay() {
   map.addLayer({ id: 'gsi', type: 'raster', source: 'gsi', paint: { 'raster-opacity': overlayOp / 100, 'raster-fade-duration': 0 } });
 }
 map.on('style.load', applyOverlay);
+// 3D の建物（利用者の指定。2026-10-05）: 背景の地図（CARTO）の建物（render_height・render_min_height）を立ち上げる。
+// 縮尺 14 以上だけ描く（広域では建物の層が無く、重さに影響しない）。オンにすると地図を傾け、オフで真上に戻す
+let bldg3d = false;
+try { bldg3d = localStorage.getItem('bt.3d') === '1'; } catch { /* 使えなくてもよい */ }
+$('bldg3d').checked = bldg3d;
+function applyBuildings() {
+  if (!map.getStyle()) return;
+  if (map.getLayer('bt-3d')) map.removeLayer('bt-3d');
+  if (!bldg3d || !map.getSource('carto')) return;
+  const dark = theme === 'dark';
+  const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+  map.addLayer({
+    id: 'bt-3d', type: 'fill-extrusion', source: 'carto', 'source-layer': 'building', minzoom: 14,
+    filter: ['!=', ['get', 'hide_3d'], true],
+    paint: {
+      'fill-extrusion-color': dark ? '#3a4656' : '#d4d9e0',
+      'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15, ['coalesce', ['get', 'render_height'], 6]],
+      'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+      'fill-extrusion-opacity': dark ? 0.75 : 0.85,
+    },
+  }, firstSymbol);
+}
+map.on('style.load', applyBuildings);
+if (bldg3d) map.once('load', () => { if (map.getPitch() < 1) map.easeTo({ pitch: 55, duration: 0 }); });
+$('bldg3d').onchange = (e) => {
+  bldg3d = e.target.checked;
+  try { localStorage.setItem('bt.3d', bldg3d ? '1' : '0'); } catch { /* 使えなくてもよい */ }
+  applyBuildings();
+  map.easeTo({ pitch: bldg3d ? 55 : 0, duration: 800 });
+};
 $('overlayMap').onchange = (e) => {
   overlayMap = e.target.value;
   $('overlayOpWrap').hidden = !overlayMap;
@@ -165,7 +195,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=aef2a7b-1207', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=6a1454c-1226', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1523,7 +1553,7 @@ $('theme').onchange = (e) => {
   document.documentElement.dataset.theme = theme;
   // 切り替えでは style.load が来ないことがある（差分で入れ替えるため）。読み込み終わったら日本語名と重ねる地図をかけ直す
   map.setStyle(STYLES[theme]);
-  map.once('idle', () => { japaneseLabels(); applyOverlay(); });
+  map.once('idle', () => { japaneseLabels(); applyOverlay(); applyBuildings(); });
   drawHist();
 };
 $('btnSources').onclick = () => $('dlgSources').showModal();
