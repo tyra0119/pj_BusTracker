@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=4dfd3d9-1652';
-import { holidayName } from './holidays.mjs?v=4dfd3d9-1652';
-import { Realtime } from './realtime.mjs?v=4dfd3d9-1652';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bddd4d7-1735';
+import { holidayName } from './holidays.mjs?v=bddd4d7-1735';
+import { Realtime } from './realtime.mjs?v=bddd4d7-1735';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -202,7 +202,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=4dfd3d9-1652', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=bddd4d7-1735', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1042,10 +1042,15 @@ function onHover(info) {
   const x = Math.min(info.x + 14, innerWidth - 290), y = Math.max(8, info.y - 10 - tip.offsetHeight);
   tip.style.left = `${x}px`; tip.style.top = `${y}px`;
 }
+/** 押した・乗せたバスの点の便の番号（無ければ -1）。点の層が描いたときの対応表で引く */
+function busPick(info) {
+  const ids = info.layer?.props?.data?.ids;
+  return ids && info.index >= 0 && info.index < ids.length ? ids[info.index] : -1;
+}
 function describe(info) {
   if (!info.layer) return null;
-  if (info.layer.id === 'buses' && info.index >= 0 && info.index < nRun) {
-    const j = runIdx[info.index];
+  if (info.layer.id === 'buses' && busPick(info) >= 0) {
+    const j = busPick(info);
     const { feed, pat } = schedule.tripInfo(j);
     const rt = feed.routes[pat.r];
     return `<b>${rt.mode ? `${MODES[rt.mode].label}　` : ''}${esc(routeName(rt))}　${esc(pat.h)} 行</b><span>${esc(agencyName(feed, rt))}</span>`;
@@ -1083,8 +1088,8 @@ function describe(info) {
 function onClick(info) {
   tip.hidden = true;
   info = withMapLine(info);
-  if (info.layer?.id === 'buses' && info.index >= 0 && info.index < nRun) {
-    const j = runIdx[info.index];
+  if (info.layer?.id === 'buses' && busPick(info) >= 0) {
+    const j = busPick(info);
     const fi = schedule.tf[j], k = schedule.ti[j];
     const feed = feeds[fi], pat = feed.pats[feed.trips[k * 4]];
     selTrip = { f: fi, k, at: schedule.day * 86400 + schedule.ts[j] };
@@ -1342,7 +1347,9 @@ function layers() {
       }));
     }
   }
-  const busData = { length: nRun, attributes: { getPosition: { value: posBuf.subarray(0, nRun * 2), size: 2 }, getFillColor: { value: colBuf.subarray(0, nRun * 4), size: 4 }, getRadius: { value: radBuf.subarray(0, nRun), size: 1 } } };
+  // ids: 何番目の点がどの便か（この層が描いたときの写し）。押したときはこれで引く。runIdx は毎フレーム作り直すので、
+  // 描画が 1 フレーム遅れて押した位置を調べると番号がずれ、全国の別の便（札幌で押して釧路のバス）を選んでいた（2026-10-05）
+  const busData = { length: nRun, ids: runIdx.slice(0, nRun), attributes: { getPosition: { value: posBuf.subarray(0, nRun * 2), size: 2 }, getFillColor: { value: colBuf.subarray(0, nRun * 4), size: 4 }, getRadius: { value: radBuf.subarray(0, nRun), size: 1 } } };
   if (theme === 'dark' && z >= 12 && !MOBILE) {
     out.push(new ScatterplotLayer({
       id: 'busGlow', data: busData, radiusUnits: 'pixels', radiusScale: 2.1, opacity: 0.16,
