@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=477bf5f-1316';
-import { holidayName } from './holidays.mjs?v=477bf5f-1316';
-import { Realtime } from './realtime.mjs?v=477bf5f-1316';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=41df4fe-1324';
+import { holidayName } from './holidays.mjs?v=41df4fe-1324';
+import { Realtime } from './realtime.mjs?v=41df4fe-1324';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -140,7 +140,7 @@ const LINES = [
   { key: 'track', label: '線路', help: '全国の鉄道の線路を出します。押すと、列車が走っているか・走っていない理由が分かります' },
   { key: 'busline', label: '路線バスの路線', help: '路線バス（一般の路線・コミュニティバス）の通り道を出します。押すとその系統を選べます' },
   { key: 'hwline', label: '高速バスの路線', help: '高速バス・空港バスの通り道を出します。押すとその系統を選べます' },
-  { key: 'motorway', label: '高速道路', help: '高速道路（自動車専用道路）を出します。多くの高速バスはこの道を走ります' },
+  { key: 'motorway', label: '高速・有料道路', help: '高速道路と有料道路（六甲北有料道路など）を出します。多くの高速バスはこの道を走ります' },
   { key: 'stops', label: '停留所・駅', help: '駅とバス停を出します（拡大すると出ます）。押すと発車の予定や、時刻表が無い理由が分かります' },
 ];
 const RT_HELP = 'バス・電車が配信している「今の本当の位置」を出します（「いま」のときだけ）。色は時刻表との差、押すとその車両を追いかけます';
@@ -198,7 +198,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=477bf5f-1316', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=41df4fe-1324', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -506,8 +506,9 @@ function addMapLineLayers() {
   map.addSource('bt-hwlines', { type: 'geojson', data: lineFC.hw, tolerance: 0.5 });
   map.addLayer({ id: 'bt-buslines', type: 'line', source: 'bt-buslines', layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: { 'line-color': dark ? '#ebc378' : '#965a00', 'line-opacity': dark ? 0.07 : 0.12, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.1, 14, 1.6] } }, firstSymbol);
   map.addLayer({ id: 'bt-hwlines', type: 'line', source: 'bt-hwlines', layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: { 'line-color': dark ? '#5acdff' : '#006eaa', 'line-opacity': dark ? 0.25 : 0.4, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.9, 10, 1.4, 14, 2] } }, firstSymbol);
-  // 高速道路（利用者の指定。2026-10-05）: 背景の地図のタイルの道路（transportation）のうち motorway。ランプは細く。バスの路線より下に
-  map.addLayer({ id: 'bt-motorway', type: 'line', source: 'carto', 'source-layer': 'transportation', filter: ['==', ['get', 'class'], 'motorway'], layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: {
+  // 高速・有料道路（利用者の指定。2026-10-05）: 背景の地図のタイルの道路（transportation）のうち motorway と、有料（toll=1）の
+  // trunk・primary・secondary（六甲北有料道路などは高速道路ではなく primary・有料として入っている）。ランプは細く。バスの路線より下に
+  map.addLayer({ id: 'bt-motorway', type: 'line', source: 'carto', 'source-layer': 'transportation', filter: ['any', ['==', ['get', 'class'], 'motorway'], ['all', ['in', ['get', 'class'], ['literal', ['trunk', 'primary', 'secondary']]], ['==', ['get', 'toll'], 1]]], layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: {
     'line-color': dark ? '#a98cff' : '#6a4fd6',
     'line-opacity': ['case', ['==', ['get', 'ramp'], 1], 0.45, 0.7],
     'line-width': ['interpolate', ['linear'], ['zoom'], 5, ['case', ['==', ['get', 'ramp'], 1], 0.4, 1], 10, ['case', ['==', ['get', 'ramp'], 1], 0.8, 2], 14, ['case', ['==', ['get', 'ramp'], 1], 1.5, 4]] } }, map.getLayer('bt-buslines') ? 'bt-buslines' : firstSymbol);
