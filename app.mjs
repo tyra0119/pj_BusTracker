@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b5ab1f4-1135';
-import { holidayName } from './holidays.mjs?v=b5ab1f4-1135';
-import { Realtime } from './realtime.mjs?v=b5ab1f4-1135';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=aef2a7b-1207';
+import { holidayName } from './holidays.mjs?v=aef2a7b-1207';
+import { Realtime } from './realtime.mjs?v=aef2a7b-1207';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -150,7 +150,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610050235');
+  const res = await fetch('./data/index.json?v=202610050307');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -165,7 +165,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=b5ab1f4-1135', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=aef2a7b-1207', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -173,7 +173,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050235`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050307`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -1202,9 +1202,13 @@ function layers() {
       { id: 'trailMid', k: 0.35, a: dark ? 0.55 : 0.55, wd: 1.8 },
       { id: 'trailHead', k: 0.1, a: 1, wd: 2.4 },
     ];
+    // 縮尺を変えている最中は、軌跡を長い尾の 1 枚だけに（背景の地図の地名と軌跡を同時に描き直すと、Android 実機で 15 fps に落ちた。
+    // どちらか一方なら 55〜60 fps。描かない層も消さずに隠すので、止めたときに作り直しは起きない。2026-10-05）
+    const zooming = map.isZooming() || map.isRotating();
     for (const tr of tiers) {
       out.push(new TripsLayer({
         id: tr.id,
+        visible: !(zooming && tr.k < 1),
         data: trails.data,
         getPath: (d) => d.path,
         positionFormat: 'XY',
@@ -1214,8 +1218,8 @@ function layers() {
         widthScale: w,
         widthUnits: 'pixels',
         widthMinPixels: 1,
-        capRounded: true,
-        jointRounded: true,
+        capRounded: !MOBILE,
+        jointRounded: !MOBILE, // スマホは丸めない（点が増える）
         fadeTrail: true,
         trailLength: Math.max(1, L * tr.k),
         currentTime: clock.t - trails.base,
