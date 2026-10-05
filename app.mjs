@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=6a1454c-1226';
-import { holidayName } from './holidays.mjs?v=6a1454c-1226';
-import { Realtime } from './realtime.mjs?v=6a1454c-1226';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=621e7bb-1231';
+import { holidayName } from './holidays.mjs?v=621e7bb-1231';
+import { Realtime } from './realtime.mjs?v=621e7bb-1231';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -34,7 +34,9 @@ const map = new maplibregl.Map({
   maxZoom: 18,
   hash: 'map',
   attributionControl: { compact: true, customAttribution: 'バス・鉄道: 各事業者・自治体の GTFS-JP ほか（「出典」）／線形: 国土数値情報、© OpenStreetMap contributors' },
-  pitchWithRotate: false,
+  // 右ドラッグで回すと同時に傾けられる（3D の建物を見るため。利用者の指定。2026-10-05）。方角のボタンで北が上・真上に戻る
+  pitchWithRotate: true,
+  maxPitch: 70,
 });
 // 地名は日本語で: CARTO の地図は縮尺によって英語名（name_en）や現地名（name。海は英語）を出すので、日本語名（name:ja）に差し替える
 function japaneseLabels() {
@@ -109,7 +111,7 @@ $('overlayOp').oninput = (e) => {
   if (map.getLayer('gsi')) map.setPaintProperty('gsi', 'raster-opacity', overlayOp / 100);
 };
 // 地図のボタン: 拡大・縮小・方角（押すと北を上に戻す。右ドラッグ・2 本指で回せる）・現在地・全体表示
-map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: false }), 'top-right');
+map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showAccuracyCircle: true }), 'top-right');
 const JAPAN = [[122.9, 24.0], [146.0, 45.6]];
 class FitAllControl {
@@ -195,7 +197,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=6a1454c-1226', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=621e7bb-1231', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);

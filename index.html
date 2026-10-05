@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="6a1454c-1226">
+<meta charset="utf-8"><meta name="build" content="621e7bb-1231">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス・鉄道軌跡マップ</title>
 <meta name="description" content="全国のバス・鉄道を、公開されている時刻表どおりに地図の上で走らせる。デマンド交通の区域も出す。時刻を動かして、早送りもできる。">
@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
 <link rel="preconnect" href="https://tiles.basemaps.cartocdn.com" crossorigin>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=6a1454c-1226">
+<link rel="stylesheet" href="./style.css?v=621e7bb-1231">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -122,7 +122,7 @@
     <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
     <li>「表示」の<b>3D の建物</b>をオンにすると、地図を傾けて、拡大したとき（縮尺 14 以上）に建物を高さどおりに立ち上げます。2 本指を上下に動かすと傾きを変えられます。少し重くなります。</li>
     <li>「表示」で、軌跡の長さ・地図の明るさのほか、<b>国土地理院の地図（淡色地図・標準地図・航空写真）を半透明で重ねる</b>ことができます。地域や地名が分かりにくいときに。濃さも変えられます。</li>
-    <li>右上のボタン: 拡大・縮小・方角（北を上に戻す。右ドラッグや 2 本指で回せます）・現在地・全体表示。</li>
+    <li>右上のボタン: 拡大・縮小・方角（北を上・真上からに戻す。右ドラッグで回す・上下に動かすと傾く。スマホは 2 本指で回す・上下に動かすと傾く）・現在地・全体表示。</li>
     <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
     <li>時刻表の期間が切れている事業者は、同じ曜日（土休日）の最後のダイヤで代わりに走らせ、「代わりのダイヤ」と表示します。</li>
     <li>データ: GTFS-JP（gtfs-data.jp・公共交通オープンデータセンター）と、GTFS を公開していない事業者は時刻表から組み直したもの（非公式）。一覧は「出典」に。</li>
@@ -131,6 +131,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=6a1454c-1226"></script>
+<script type="module" src="./app.mjs?v=621e7bb-1231"></script>
 </body>
 </html>
