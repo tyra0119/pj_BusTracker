@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=31eaf52-1007';
-import { holidayName } from './holidays.mjs?v=31eaf52-1007';
-import { Realtime } from './realtime.mjs?v=31eaf52-1007';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=9df6304-1010';
+import { holidayName } from './holidays.mjs?v=9df6304-1010';
+import { Realtime } from './realtime.mjs?v=9df6304-1010';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -149,7 +149,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610050107');
+  const res = await fetch('./data/index.json?v=202610050110');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -164,7 +164,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=31eaf52-1007', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=9df6304-1010', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -172,7 +172,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050107`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050110`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
