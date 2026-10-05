@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=91a8013-1612';
-import { holidayName } from './holidays.mjs?v=91a8013-1612';
-import { Realtime } from './realtime.mjs?v=91a8013-1612';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=01420ca-1644';
+import { holidayName } from './holidays.mjs?v=01420ca-1644';
+import { Realtime } from './realtime.mjs?v=01420ca-1644';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -178,12 +178,16 @@ function goNow() {
 // フィードごとの 955 ファイルだと、GitHub Pages の中継サーバーにファイルが無いとき（しばらく誰も開かないと 10 分で消える）
 // 1 ファイル約 0.2 秒かかり、全国分に 8〜30 秒かかった（2026-10-04）
 const BUDGET = MOBILE ? 10 * 1048576 : Infinity;
+// 全国にまたがるまとまり（高速バス・長距離の列車。範囲が 2.5 度を超える。build-bundles.mjs の WIDE と同じ）は別の枠で読む。地域のまとまりと同じく「中心から近い順」に
+// 並べると、範囲の中心が遠いのでいつも最後になり、スマホでは枠に収まらず高速バスが 1 台も出なかった（東京で 0 台。2026-10-05）
+const BUDGET_WIDE = MOBILE ? 8 * 1048576 : Infinity;
+const isWide = (u) => u.bbox[2] - u.bbox[0] > 2.5 || u.bbox[3] - u.bbox[1] > 2.5;
 let loadSeq = 0;
 let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610050711');
+  const res = await fetch('./data/index.json?v=202610050744');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -198,7 +202,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=91a8013-1612', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=01420ca-1644', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -206,7 +210,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050711`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050744`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -223,6 +227,7 @@ function dropUnit(u) {
   }
   unitLoaded.delete(u.k);
 }
+let partialNote = '';
 async function syncFeeds() {
   if (!index) return;
   const seq = ++loadSeq;
@@ -235,24 +240,29 @@ async function syncFeeds() {
     // 見ている範囲で、まだ読んでいないもの（近い順）を予算まで足す。
     // 読んだものは予算を超えるまで手放さない（拡大・縮小のたびに手放して読み直すと、そのたびに固まった。2026-10-04）
     const want = new Set(inView.map((u) => u.k));
-    let bytes = 0;
     const add = [];
-    for (const u of inView) { if (bytes + u.size > BUDGET && add.length) break; bytes += u.size; add.push(u.k); }
+    // 地域のまとまりは近い順、全国にまたがるまとまりは便の多い順に、それぞれの枠まで
+    for (const [group, budget] of [[inView.filter((u) => !isWide(u)), BUDGET], [inView.filter(isWide).sort((a, b) => b.trips - a.trips), BUDGET_WIDE]]) {
+      let bytes = 0, n = 0;
+      for (const u of group) { if (bytes + u.size > budget && n) break; bytes += u.size; n++; add.push(u.k); }
+    }
     const byK = new Map(units.map((u) => [u.k, u]));
-    let held = [...unitLoaded].reduce((t, k) => t + byK.get(k).size, 0) + add.filter((k) => !unitLoaded.has(k)).reduce((t, k) => t + byK.get(k).size, 0);
     let dropped = 0;
-    if (held > BUDGET) {
+    for (const [wide, budget] of [[false, BUDGET], [true, BUDGET_WIDE]]) {
+      const mine = (u) => isWide(u) === wide;
+      let held = [...unitLoaded].map((k) => byK.get(k)).filter(mine).reduce((t, u) => t + u.size, 0) + add.map((k) => byK.get(k)).filter((u) => mine(u) && !unitLoaded.has(u.k)).reduce((t, u) => t + u.size, 0);
+      if (held <= budget) continue;
       // 見ている範囲の外を、中心から遠い順に手放す
-      const far = [...unitLoaded].map((k) => byK.get(k)).filter((u) => !want.has(u.k)).sort((a, b) => dist(b) - dist(a));
+      const far = [...unitLoaded].map((k) => byK.get(k)).filter((u) => mine(u) && !want.has(u.k)).sort((a, b) => dist(b) - dist(a));
       for (const u of far) {
-        if (held <= BUDGET) break;
+        if (held <= budget) break;
         held -= u.size; dropUnit(u); dropped++;
       }
     }
     if (dropped) scheduleRebuild(true); // 手放したフィードの便を一覧に残さない（残ると毎フレームの更新が止まっていた）
     list = list.filter((u) => add.includes(u.k));
-    const partial = add.length < inView.length;
-    $('load').textContent = `見ている範囲 ${fmt(inView.reduce((t, u) => t + u.ids.length, 0))} データ${partial ? '（広域は一部。拡大すると全部）' : ''}`;
+    partialNote = add.length < inView.length ? '（広域は一部。拡大すると全部）' : '';
+    $('load').textContent = `見ている範囲 ${fmt(inView.reduce((t, u) => t + u.ids.length, 0))} データ${partialNote}`;
   }
   const queue = list.filter((u) => !unitLoaded.has(u.k) && !loadingNow.has(u.k));
   // 広く見ているとき（縮尺 9 未満）は、便の多いまとまりから読む（近い順だと、全国表示では中心の小さなデータが先で、
@@ -286,7 +296,8 @@ async function syncFeeds() {
   await Promise.all(Array.from({ length: MOBILE ? 6 : 16 }, step));
   if (seq === loadSeq) {
     scheduleRebuild(true);
-    if (MOBILE) $('load').textContent = `見ている範囲 ${fmt(feeds.filter(Boolean).length)} データ`;
+    applyPendingPick();
+    if (MOBILE) $('load').textContent = `見ている範囲 ${fmt(feeds.filter(Boolean).length)} データ${partialNote}`; // 「一部」は読み終わっても残す
   }
 }
 let rebuildTimer = null, lastRebuild = 0;
@@ -1726,10 +1737,50 @@ function search(q) {
     });
     if (out.length > 800) break;
   }
+  // 読んでいないデータは全国の索引で（スマホ。選ぶと地図をそこへ移し、読めたら選ぶ）
+  if (gIndex) {
+    for (const [f, stops, routes] of gIndex) {
+      if (feeds[f] || !index.feeds[f]) continue;
+      const fname = index.feeds[f].name;
+      for (const [r, short, long, w, s, e, n] of routes) {
+        if (`${short} ${long} ${fname}`.toLowerCase().includes(q)) out.push({ kind: 'groute', f, r, bbox: [w, s, e, n], label: short || long || '（系統名なし）', sub: `${fname}${long && short ? `　${long}` : ''}`, rank: short.toLowerCase() === q ? 0 : 1 });
+      }
+      for (const [nm, la, lo] of stops) {
+        if (nm.toLowerCase().includes(q)) out.push({ kind: 'gstop', f, label: nm, lat: la, lon: lo, sub: `停留所　${fname}`, rank: nm.toLowerCase() === q ? 0 : 2 });
+      }
+      if (out.length > 1200) break;
+    }
+  }
   return out.sort((a, b) => a.rank - b.rank).slice(0, 60);
 }
+// 全国の検索の索引（data/search.json。系統名・停留所名と位置）。スマホは見ている範囲のデータしか読まないので、検索欄を使うときに読む
+let gIndex = null, gIndexLoading = false, pendingPick = null;
+function loadSearchIndex() {
+  if (!MOBILE || gIndex || gIndexLoading) return;
+  gIndexLoading = true;
+  fetch('./data/search.json?v=202610050744').then((r) => r.json()).then((x) => {
+    gIndex = x;
+    if ($('q').value.trim()) $('q').dispatchEvent(new Event('input')); // 打ったあとに読めたら探し直す
+  }).catch(() => { gIndexLoading = false; });
+}
+/** 索引から選んだもの: データが読めたら、その系統・停留所を選ぶ */
+function applyPendingPick() {
+  const it = pendingPick;
+  if (!it || !feeds[it.f]) return;
+  pendingPick = null;
+  const feed = feeds[it.f];
+  if (it.kind === 'groute') { if (feed.routes[it.r]) selectRoute(it.f, it.r, { fit: true }); return; }
+  let best = -1, bd = Infinity;
+  feed.stopNames.forEach((n, s) => { if (n !== it.label) return; const d = (feed.stopLat[s] - it.lat) ** 2 + (feed.stopLon[s] - it.lon) ** 2; if (d < bd) { bd = d; best = s; } });
+  if (best < 0) return;
+  selStop = { f: it.f, s: best };
+  sel = null; selGeom = null; selTrip = null;
+  refreshPanel();
+}
 let qTimer;
+$('q').addEventListener('focus', loadSearchIndex);
 $('q').addEventListener('input', (e) => {
+  loadSearchIndex();
   clearTimeout(qTimer);
   qTimer = setTimeout(() => {
     qItems = search(e.target.value);
@@ -1744,7 +1795,12 @@ $('qres').addEventListener('click', (e) => {
   const it = qItems[+li.dataset.i];
   $('qres').hidden = true;
   if (it.kind === 'route') selectRoute(it.f, it.r, { fit: true });
-  else {
+  else if (it.kind === 'groute' || it.kind === 'gstop') {
+    // まだ読んでいないデータ: 地図をそこへ移す（移すと読み込む）。読めたら選ぶ（applyPendingPick）
+    pendingPick = it;
+    if (it.kind === 'groute') map.fitBounds([[it.bbox[0], it.bbox[1]], [it.bbox[2], it.bbox[3]]], { padding: 40, maxZoom: 14 });
+    else map.flyTo({ center: [it.lon, it.lat], zoom: 15.5 });
+  } else {
     const feed = feeds[it.f];
     selStop = { f: it.f, s: it.s };
     sel = null; selGeom = null; selTrip = null;
