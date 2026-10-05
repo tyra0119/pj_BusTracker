@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=bddd4d7-1735';
-import { holidayName } from './holidays.mjs?v=bddd4d7-1735';
-import { Realtime } from './realtime.mjs?v=bddd4d7-1735';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=0630937-1751';
+import { holidayName } from './holidays.mjs?v=0630937-1751';
+import { Realtime } from './realtime.mjs?v=0630937-1751';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -202,7 +202,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=bddd4d7-1735', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=0630937-1751', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -533,7 +533,28 @@ function addMapLineLayers() {
   // 乗せた系統を白く
   map.addLayer({ id: 'bt-lines-hl', type: 'line', source: 'bt-buslines', filter: ['==', ['get', 'f'], -1], paint: { 'line-color': dark ? '#ffffff' : '#005a96', 'line-opacity': 0.85, 'line-width': 2.5 } }, firstSymbol);
   map.addLayer({ id: 'bt-hwlines-hl', type: 'line', source: 'bt-hwlines', filter: ['==', ['get', 'f'], -1], paint: { 'line-color': dark ? '#ffffff' : '#005a96', 'line-opacity': 0.85, 'line-width': 2.5 } }, firstSymbol);
-  mapLinesDim = null; mapLinesHl = ''; mapTrackHl = -2;
+  // 選んだ系統の停留所名・駅名（deck.gl の文字は SDF で、12 px の日本語は画が細くかすれて読みにくかった（利用者の指摘。2026-10-05）。
+  // 地図の側で描くと、地名と同じくブラウザの字体でくっきり描け、重なる名前は自動でよける）。いちばん上に
+  const font = map.getStyle().layers.find((l) => l.type === 'symbol' && l.layout?.['text-font'])?.layout['text-font'] ?? ['Open Sans Regular'];
+  map.addSource('bt-labels', { type: 'geojson', data: EMPTY_FC });
+  map.addLayer({ id: 'bt-labels', type: 'symbol', source: 'bt-labels', layout: {
+    'text-field': ['get', 'name'], 'text-font': font, 'text-size': ['case', ['==', ['get', 'k'], 0], 14, 13],
+    'text-anchor': 'bottom', 'text-offset': [0, -1.1], 'text-padding': 2, 'symbol-sort-key': ['get', 'k'],
+  }, paint: { 'text-color': dark ? '#f2f5f8' : '#14181e', 'text-halo-color': dark ? 'rgba(8, 12, 16, 0.95)' : 'rgba(255, 255, 255, 0.95)', 'text-halo-width': 1.8 } });
+  mapLinesDim = null; mapLinesHl = ''; mapTrackHl = -2; mapLabels = { sel: null, st: null };
+}
+let mapLabels = { sel: null, st: null };
+/** 選んだ系統の停留所名（縮尺 12.5 以上）と駅名（停留所・駅の札、縮尺 13.5 以上）。変わったときだけ地図に渡す */
+function syncMapLabels(z) {
+  if (!map.getSource('bt-labels')) return;
+  const sel = selGeom && z >= 12.5 ? selGeom.stops : null, st = lineOn.stops && z >= 13.5 && stationView.length ? stationView : null;
+  if (sel === mapLabels.sel && st === mapLabels.st) return;
+  mapLabels = { sel, st };
+  const features = [];
+  // k: 0 = 選んだ系統の停留所（重なったときに優先）・1 = 駅
+  for (const d of sel ?? []) features.push({ type: 'Feature', properties: { name: d.name, k: 0 }, geometry: { type: 'Point', coordinates: d.p } });
+  for (const d of st ?? []) features.push({ type: 'Feature', properties: { name: d.name, k: 1 }, geometry: { type: 'Point', coordinates: d.p } });
+  map.getSource('bt-labels').setData({ type: 'FeatureCollection', features });
 }
 let mapTrackHl = -2, hoverTrack = -1;
 map.on('style.load', addMapLineLayers);
@@ -1240,6 +1261,7 @@ function layers() {
   }
   if (lineOn.busline || lineOn.hwline || lineJob) buildBusLines();
   syncMapLines(dim);
+  syncMapLabels(z);
   if (selGeom) {
     out.push(new PathLayer({ id: 'selHalo', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [255, 255, 255, 200], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
     out.push(new PathLayer({ id: 'selLine', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [...selGeom.c, 255], getWidth: 3.5, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
@@ -1311,14 +1333,6 @@ function layers() {
       getFillColor: dark ? [235, 240, 245, 230] : [40, 50, 60, 230], stroked: true, getLineColor: dark ? [20, 26, 34, 255] : [255, 255, 255, 255],
       lineWidthUnits: 'pixels', getLineWidth: 1.5, pickable: true, autoHighlight: true, highlightColor: [255, 196, 0, 255],
     }));
-    if (z >= 13.5) {
-      out.push(new TextLayer({
-        id: 'stationNames', data: stationView, getPosition: (d) => d.p, getText: (d) => d.name, characterSet: 'auto',
-        getSize: 12, getColor: dark ? [225, 232, 240] : [25, 30, 36], getPixelOffset: [0, -13], fontWeight: 700,
-        fontFamily: '"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif', outlineWidth: 3, outlineColor: dark ? [10, 14, 18, 255] : [255, 255, 255, 255],
-        fontSettings: { sdf: true },
-      }));
-    }
   }
   if (lineOn.stops && p11Pts.length && z >= 13) {
     // 全国のバス停（時刻表のデータが無いものも）。小さく淡く
@@ -1338,14 +1352,6 @@ function layers() {
       id: 'selStops', data: selGeom.stops, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 4.5,
       getFillColor: [255, 255, 255], stroked: true, getLineColor: [...selGeom.c, 255], lineWidthUnits: 'pixels', getLineWidth: 2, pickable: true,
     }));
-    if (z >= 12.5) {
-      out.push(new TextLayer({
-        id: 'selStopNames', data: selGeom.stops, getPosition: (d) => d.p, getText: (d) => d.name, characterSet: 'auto',
-        getSize: 12, getColor: theme === 'dark' ? [235, 240, 245] : [20, 25, 30], getPixelOffset: [0, -14],
-        fontFamily: '"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif', outlineWidth: 3, outlineColor: theme === 'dark' ? [10, 14, 18, 255] : [255, 255, 255, 255],
-        fontSettings: { sdf: true }, background: false,
-      }));
-    }
   }
   // ids: 何番目の点がどの便か（この層が描いたときの写し）。押したときはこれで引く。runIdx は毎フレーム作り直すので、
   // 描画が 1 フレーム遅れて押した位置を調べると番号がずれ、全国の別の便（札幌で押して釧路のバス）を選んでいた（2026-10-05）
