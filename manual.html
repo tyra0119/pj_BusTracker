@@ -77,7 +77,7 @@
       <li><a href="#select">系統・便・停留所・駅を選ぶ</a></li>
       <li><a href="#follow">追いかける</a></li>
       <li><a href="#realtime">実際の位置</a></li>
-      <li><a href="#lines">線路・バス路線・停留所と駅</a></li>
+      <li><a href="#lines">線路・バスの路線・停留所と駅</a></li>
       <li><a href="#nodata">データの無い路線の理由</a></li>
       <li><a href="#mobile">スマホで使うとき</a></li>
       <li><a href="#sources">データの出典とライセンス</a></li>
@@ -99,7 +99,7 @@
   <p>光る点がバス・列車、後ろに伸びて徐々に消えていく尾が、通ってきた軌跡（残像）です。高速バスは大きめの点と太い軌跡、鉄道は太めの軌跡で描きます。</p>
   <figure><img src="manual/city.jpg" alt="東京の都心部の地図に、多数のバス・鉄道が色とりどりの点と軌跡で表示されている。上に札と検索欄、下に時刻のつまみ" loading="lazy" width="1200" height="750"><figcaption>東京の朝のラッシュ。上の欄・下の欄・右の地図のボタン</figcaption></figure>
   <table>
-    <tr><th>上の欄</th><td>アプリ名、<b>画面の中で走っている台数</b>（かっこ内は読み込んだ全体）、乗り物の札（<a href="#modes">4</a>）、<span class="chip">実際の位置</span>（<a href="#realtime">7</a>）、<span class="chip">線路</span><span class="chip">バス路線</span><span class="chip">停留所・駅</span>（<a href="#lines">8</a>）、検索欄、<span class="chip">表示</span><span class="chip">出典</span><span class="chip">使い方</span></td></tr>
+    <tr><th>上の欄</th><td>アプリ名、<b>画面の中で走っている台数</b>（かっこ内は読み込んだ全体）、乗り物の札（<a href="#modes">4</a>）、<span class="chip">実際の位置</span>（<a href="#realtime">7</a>）、<span class="chip">線路</span><span class="chip">路線バスの路線</span><span class="chip">高速バスの路線</span><span class="chip">停留所・駅</span>（<a href="#lines">8</a>）、検索欄、<span class="chip">表示</span><span class="chip">出典</span><span class="chip">使い方</span></td></tr>
     <tr><th>右の地図のボタン</th><td>拡大・縮小、方角（押すと北を上に戻す）、現在地、全体表示（日本全体に戻る）</td></tr>
     <tr><th>右の情報欄</th><td>押した系統・便・停留所・駅・車両の詳しい情報（<a href="#select">5</a>）</td></tr>
     <tr><th>下の欄</th><td>再生・一時停止、日付と曜日の区分（平日・土・日祝）、時刻、速さ（×1〜×1200）、<span class="chip">いま</span>、時刻のつまみ。つまみの下の帯は、その時刻に走っている台数のグラフです</td></tr>
@@ -137,7 +137,7 @@
     <div>
       <ul>
         <li><b>バス・列車を押す</b>と、その系統（路線）が選ばれ、ほかは暗くなります。右の情報欄に、系統名・事業者、この日の便の数、いま走っている台数、始発・最終、<b>押した便の停車駅と時刻</b>（いまの位置に印）、行先ごとの本数が出ます。</li>
-        <li><b>バス路線の線</b>（<a href="#lines">8</a>）を押しても、その系統を選べます。</li>
+        <li><b>バスの路線の線</b>（<a href="#lines">8</a>）を押しても、その系統を選べます。</li>
         <li><b>停留所・駅を押す</b>と、そこを通る系統・路線の一覧が出て、押すと選べます。</li>
         <li>情報欄のボタン: <span class="chip">この系統に寄る</span>（系統全体が入るように地図を動かす）、<span class="chip">このバスを追う</span>（<a href="#follow">6</a>）、<span class="chip">閉じる</span>。</li>
         <li>地図の何も無い所を押すか <kbd>Esc</kbd> で、選択を外せます。</li>
@@ -167,11 +167,12 @@
     <li>いまは公共交通オープンデータセンターの配信（都営バス・関東バス・京王バス・西武バス・横浜市営・川崎市・JR東日本・京王線・東武線など約 40）に対応しています。見ている範囲の配信だけを読みます。</li>
   </ul>
 
-  <h2 id="lines"><span class="n">8</span>線路・バス路線・停留所と駅</h2>
+  <h2 id="lines"><span class="n">8</span>線路・バスの路線・停留所と駅</h2>
   <p>上の札で、背景の線と点を出したり消したりできます（開いたときはすべてオフ）。</p>
   <table>
     <tr><th>線路</th><td>全国の鉄道の線路（国土数値情報）。押すと、その路線で列車を走らせているか、走らせていない理由が出ます</td></tr>
-    <tr><th>バス路線</th><td>バス停を結んだバスの通り道。押すとその系統を選べます</td></tr>
+    <tr><th>路線バスの路線</th><td>路線バス（一般の路線・コミュニティバス）の通り道。淡い金色。押すとその系統を選べます</td></tr>
+    <tr><th>高速バスの路線</th><td>高速バス・空港バスの通り道。シアン。押すとその系統を選べます</td></tr>
     <tr><th>停留所・駅</th><td>駅（白い点。少し拡大すると出ます）と、バス停（大きく拡大すると出ます）。<b>灰色の小さな点</b>は、時刻表のデータがまだ無いバス停（国土数値情報の全国のバス停 約 27.8 万か所）です</td></tr>
   </table>
 

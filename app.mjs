@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=9df6304-1010';
-import { holidayName } from './holidays.mjs?v=9df6304-1010';
-import { Realtime } from './realtime.mjs?v=9df6304-1010';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=87f49ba-1118';
+import { holidayName } from './holidays.mjs?v=87f49ba-1118';
+import { Realtime } from './realtime.mjs?v=87f49ba-1118';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -106,12 +106,13 @@ let trailLen = 600;
 // 線と点の表示（上の札）: 線路（全国の線路 N02）・バス路線（バス停を結んだ線）・停留所と駅（全国のバス停 P11 を含む）
 const LINES = [
   { key: 'track', label: '線路', help: '全国の鉄道の線路を出します。押すと、列車が走っているか・走っていない理由が分かります' },
-  { key: 'busline', label: 'バス路線', help: 'バス停を結んだバスの通り道を出します。押すとその系統を選べます' },
+  { key: 'busline', label: '路線バスの路線', help: '路線バス（一般の路線・コミュニティバス）の通り道を出します。押すとその系統を選べます' },
+  { key: 'hwline', label: '高速バスの路線', help: '高速バス・空港バスの通り道を出します。押すとその系統を選べます' },
   { key: 'stops', label: '停留所・駅', help: '駅とバス停を出します（拡大すると出ます）。押すと発車の予定や、時刻表が無い理由が分かります' },
 ];
 const RT_HELP = 'バス・電車が配信している「今の本当の位置」を出します（「いま」のときだけ）。色は時刻表との差、押すとその車両を追いかけます';
 // 開いたときは毎回すべてオフ（利用者の指定。2026-10-04）。前回の切り替えは覚えない
-const lineOn = { track: false, busline: false, stops: false };
+const lineOn = { track: false, busline: false, hwline: false, stops: false };
 // 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通（上の札で切り替える）
 const MODES = [
   { key: 'bus', label: '路線バス', unit: '台', color: [255, 196, 0] },
@@ -149,7 +150,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610050110');
+  const res = await fetch('./data/index.json?v=202610050209');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -164,7 +165,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=9df6304-1010', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=87f49ba-1118', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -172,7 +173,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050110`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050209`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -387,7 +388,12 @@ map.on('moveend', () => {
 // ---------- 路線の線・停留所（見ている範囲の分だけ） ----------
 let routesLayerDirty = true;
 let routesPending = false;
-let busLines = [];     // { path, f, r }（バス停を結んだ線。読み込んだ全フィード）
+// バスの路線の線は、背景の地図（MapLibre）の側で描く。バスを動かす描画部品（deck.gl）は毎フレーム画面全体を描き直すので、
+// そこに動かない線を置くと、数十万点を毎フレーム描き直すことになった（Android 実機で ×300・東京 32 → 16 fps）。
+// 背景の地図は地図を動かしたときだけ描き直す。作り直しはフレームごとに少しずつ（lineJob）（2026-10-05）
+const EMPTY_FC = { type: 'FeatureCollection', features: [] };
+const lineFC = { bus: EMPTY_FC, hw: EMPTY_FC }; // 最後に作った線（地図の切り替えで足し直すため）
+let lineJob = null;   // 作り直しの途中（フレームごとに少しずつ）
 let busLinesKey = '';
 let stopPts = [];      // { p, f, s }（時刻表のある停留所・駅。見ている範囲）
 let p11Pts = [];       // { p, name, op }（全国のバス停。見ている範囲）
@@ -398,23 +404,22 @@ const busLod = (z) => (z < 7 ? 1500 : z < 9 ? 400 : z < 11 ? 80 : z < 14 ? 15 : 
 function feedBusLines(feed, gap) {
   feed.busLines ??= {};
   if (feed.busLines[gap]) return feed.busLines[gap];
-  const out = [], seen = new Set();
-  const g2 = (gap / 111000) ** 2;
+  // 系統パターンの形（同じ形は 1 本）を縮尺に合わせて間引き、座標を 1 本の配列に並べる（starts: 各線の始まりの点の番号）
+  const out = { pos: null, starts: [], meta: [], n: 0 };
+  const seen = new Set(), g2 = (gap / 111000) ** 2, xs = [];
   for (const p of feed.pats) {
     const m = feed.routes[p.r].mode;
     if (m > 1 || seen.has(p.g)) continue;
     seen.add(p.g);
     const sh = feed.shape(p.g), n = sh.lat.length;
-    const keep = [];
+    out.starts.push(xs.length / 2); out.meta.push({ f: feed.i, r: p.r, m });
     let lx = Infinity, ly = Infinity;
     for (let v = 0; v < n; v++) {
       const x = sh.lon[v] * Math.cos(sh.lat[v] * Math.PI / 180), y = sh.lat[v];
-      if (v === 0 || v === n - 1 || (x - lx) ** 2 + (y - ly) ** 2 >= g2) { keep.push(v); lx = x; ly = y; }
+      if (v === 0 || v === n - 1 || (x - lx) ** 2 + (y - ly) ** 2 >= g2) { xs.push(sh.lon[v], sh.lat[v]); lx = x; ly = y; }
     }
-    const path = new Float64Array(keep.length * 2);
-    keep.forEach((v, k) => { path[k * 2] = sh.lon[v]; path[k * 2 + 1] = sh.lat[v]; });
-    out.push({ path, f: feed.i, r: p.r, m });
   }
+  out.pos = Float32Array.from(xs); out.n = xs.length / 2;
   return (feed.busLines[gap] = out);
 }
 let busLinesBounds = null;
@@ -423,15 +428,96 @@ function buildBusLines() {
   // 範囲は少し広めに取り、そこから出たときだけ作り直す
   const v = viewBounds(0);
   const inside = busLinesBounds && v[0] >= busLinesBounds[0] && v[1] >= busLinesBounds[1] && v[2] <= busLinesBounds[2] && v[3] <= busLinesBounds[3];
-  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}|${gap}`;
-  if (key === busLinesKey && inside) return;
-  busLinesKey = key;
-  busLinesBounds = viewBounds(0.6);
-  busLines = [];
-  for (const feed of feeds) {
-    if (!feed || !boxHit(feed.meta.bbox, busLinesBounds)) continue;
-    for (const l of feedBusLines(feed, gap)) if (modeOn[l.m]) busLines.push(l);
+  const key = `${schedule.day}|${lastRebuild}|${modeOn[0]}|${modeOn[1]}|${lineOn.busline}|${lineOn.hwline}|${gap}`;
+  if (!(key === busLinesKey && inside)) {
+    busLinesKey = key;
+    busLinesBounds = viewBounds(0.6);
+    // 作り直しを始める（できるまでは前の線を出したまま）
+    lineJob = { gap, queue: feeds.filter((f) => f && boxHit(f.meta.bbox, busLinesBounds)), parts: [], t0: performance.now() };
   }
+  if (!lineJob) return;
+  // 1 フレームに 6 ミリ秒まで、フィードごとに間引いた線を作る
+  const until = performance.now() + 6;
+  while (lineJob.queue.length && performance.now() < until) lineJob.parts.push(feedBusLines(lineJob.queue.shift(), lineJob.gap));
+  if (lineJob.queue.length) return;
+  // そろったら、路線バスと高速バスに分けて GeoJSON にし、背景の地図の線に渡す（タイルへの切り分けは地図の Worker で）
+  const fc = (want) => {
+    const features = [];
+    for (const pt of lineJob.parts) for (let k = 0; k < pt.meta.length; k++) {
+      if (!want(pt.meta[k].m)) continue;
+      const a = pt.starts[k], b = k + 1 < pt.starts.length ? pt.starts[k + 1] : pt.n;
+      if (b - a < 2) continue;
+      const c = new Array(b - a);
+      for (let v = a; v < b; v++) c[v - a] = [pt.pos[v * 2], pt.pos[v * 2 + 1]];
+      features.push({ type: 'Feature', properties: { f: pt.meta[k].f, r: pt.meta[k].r }, geometry: { type: 'LineString', coordinates: c } });
+    }
+    return { type: 'FeatureCollection', features };
+  };
+  lineFC.bus = lineOn.busline && modeOn[0] ? fc((m) => m === 0) : EMPTY_FC;
+  lineFC.hw = lineOn.hwline && modeOn[1] ? fc((m) => m === 1) : EMPTY_FC;
+  map.getSource('bt-buslines')?.setData(lineFC.bus);
+  map.getSource('bt-hwlines')?.setData(lineFC.hw);
+  perf.log.push(['buslines', Math.round(performance.now() - lineJob.t0)]);
+  lineJob = null;
+}
+// 背景の地図の線の層（地図の切り替えで消えるので、そのたびに足し直す）。地名の文字より下に
+function addMapLineLayers() {
+  if (!map.getStyle() || map.getSource('bt-buslines')) return;
+  const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+  const dark = theme === 'dark';
+  map.addSource('bt-buslines', { type: 'geojson', data: lineFC.bus, tolerance: 0.5 });
+  map.addSource('bt-hwlines', { type: 'geojson', data: lineFC.hw, tolerance: 0.5 });
+  map.addLayer({ id: 'bt-buslines', type: 'line', source: 'bt-buslines', layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: { 'line-color': dark ? '#ebc378' : '#965a00', 'line-opacity': dark ? 0.07 : 0.12, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.1, 14, 1.6] } }, firstSymbol);
+  map.addLayer({ id: 'bt-hwlines', type: 'line', source: 'bt-hwlines', layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' }, paint: { 'line-color': dark ? '#5acdff' : '#006eaa', 'line-opacity': dark ? 0.25 : 0.4, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.9, 10, 1.4, 14, 2] } }, firstSymbol);
+  // 線路: 新幹線は青、在来線は明るい灰青（バスの路線より上に）
+  map.addSource('bt-tracks', { type: 'geojson', data: trackFC, tolerance: 0.5 });
+  map.addLayer({ id: 'bt-tracks', type: 'line', source: 'bt-tracks', layout: { 'line-join': 'round', visibility: 'none' }, paint: {
+    'line-color': ['case', ['==', ['get', 'kind'], 1], dark ? '#6ec3ff' : '#195ac8', dark ? '#c3d2e1' : '#465564'],
+    'line-opacity': ['case', ['==', ['get', 'kind'], 1], 0.92, dark ? 0.78 : 0.82],
+    'line-width': ['interpolate', ['linear'], ['zoom'], 5, ['case', ['==', ['get', 'kind'], 1], 2.4, 1.8], 10, ['case', ['==', ['get', 'kind'], 1], 2.9, 2.2], 13, ['case', ['==', ['get', 'kind'], 1], 3.6, 2.7]] } }, firstSymbol);
+  map.addLayer({ id: 'bt-tracks-hl', type: 'line', source: 'bt-tracks', filter: ['==', ['get', 'li'], -1], paint: { 'line-color': dark ? '#dcffe6' : '#005a3c', 'line-opacity': 0.85, 'line-width': 3.5 } }, firstSymbol);
+  // 乗せた系統を白く
+  map.addLayer({ id: 'bt-lines-hl', type: 'line', source: 'bt-buslines', filter: ['==', ['get', 'f'], -1], paint: { 'line-color': dark ? '#ffffff' : '#005a96', 'line-opacity': 0.85, 'line-width': 2.5 } }, firstSymbol);
+  map.addLayer({ id: 'bt-hwlines-hl', type: 'line', source: 'bt-hwlines', filter: ['==', ['get', 'f'], -1], paint: { 'line-color': dark ? '#ffffff' : '#005a96', 'line-opacity': 0.85, 'line-width': 2.5 } }, firstSymbol);
+  mapLinesDim = null; mapLinesHl = ''; mapTrackHl = -2;
+}
+let mapTrackHl = -2, hoverTrack = -1;
+map.on('style.load', addMapLineLayers);
+let mapLinesDim = null, mapLinesHl = '';
+/** 毎フレーム: 選んでいる系統があれば線を暗く、乗せている系統を白く、札に合わせて出し入れ（変わったときだけ地図に伝える） */
+function syncMapLines(dim) {
+  if (!map.getLayer('bt-buslines')) { if (map.getStyle()) addMapLineLayers(); return; }
+  if (hoverTrack !== mapTrackHl) { mapTrackHl = hoverTrack; map.setFilter('bt-tracks-hl', ['==', ['get', 'li'], hoverTrack]); }
+  if (map.getLayoutProperty('bt-tracks', 'visibility') !== (lineOn.track ? 'visible' : 'none')) map.setLayoutProperty('bt-tracks', 'visibility', lineOn.track ? 'visible' : 'none');
+  if (dim !== mapLinesDim) {
+    mapLinesDim = dim;
+    const dark = theme === 'dark';
+    map.setPaintProperty('bt-tracks', 'line-opacity', dim ? 0.35 : ['case', ['==', ['get', 'kind'], 1], 0.92, dark ? 0.78 : 0.82]);
+    map.setPaintProperty('bt-buslines', 'line-opacity', dim ? (dark ? 0.03 : 0.05) : (dark ? 0.07 : 0.12));
+    map.setPaintProperty('bt-hwlines', 'line-opacity', dim ? (dark ? 0.08 : 0.12) : (dark ? 0.25 : 0.4));
+  }
+  const hl = hoverRoute ? `${hoverRoute.f}:${hoverRoute.r}` : '';
+  if (hl !== mapLinesHl) {
+    mapLinesHl = hl;
+    const flt = hoverRoute ? ['all', ['==', ['get', 'f'], hoverRoute.f], ['==', ['get', 'r'], hoverRoute.r]] : ['==', ['get', 'f'], -1];
+    map.setFilter('bt-lines-hl', flt); map.setFilter('bt-hwlines-hl', flt);
+  }
+  const vis = (on) => (on ? 'visible' : 'none');
+  if (map.getLayoutProperty('bt-buslines', 'visibility') !== vis(lineOn.busline)) map.setLayoutProperty('bt-buslines', 'visibility', vis(lineOn.busline));
+  if (map.getLayoutProperty('bt-hwlines', 'visibility') !== vis(lineOn.hwline)) map.setLayoutProperty('bt-hwlines', 'visibility', vis(lineOn.hwline));
+}
+/** 画面の点 (x, y) にあるバスの路線の線 { f, r, hw }。路線バスの線は縮尺 12 以上、高速バスは 9 以上で（広域で調べると重い） */
+function mapLineAt(x, y) {
+  const z = map.getZoom(), layers = [];
+  if (lineOn.track && z >= 9 && map.getLayer('bt-tracks')) layers.push('bt-tracks');
+  if (lineOn.hwline && z >= 9 && map.getLayer('bt-hwlines')) layers.push('bt-hwlines');
+  if (lineOn.busline && z >= 12 && map.getLayer('bt-buslines')) layers.push('bt-buslines');
+  if (!layers.length) return null;
+  const r = MOBILE ? 10 : 5;
+  const f = map.queryRenderedFeatures([[x - r, y - r], [x + r, y + r]], { layers })[0];
+  if (!f) return null;
+  if (f.layer.id === 'bt-tracks') return { track: true, li: f.properties.li, kind: f.properties.kind };
+  return { f: f.properties.f, r: f.properties.r, hw: f.layer.id === 'bt-hwlines' };
 }
 function buildRouteLines() {
   const _t0 = performance.now();
@@ -485,6 +571,8 @@ function p11Cell(k) {
 }
 // 線路（国土数値情報 N02）
 let trackLines = [];
+// 線路も背景の地図の側で描く（動かない線を描画部品に置くと毎フレーム描き直し、Android 実機で ×300・東京 29 → 17 fps に落ちた。2026-10-05）
+const trackFC = { type: 'FeatureCollection', features: [] };
 let stations = [];  // 全国の駅（国土数値情報 N02）{ p, name, lines: [[会社, 路線]] }
 let stationView = []; // 見ている範囲の駅
 let railStatus = {};
@@ -507,8 +595,12 @@ async function loadStatic() {
         const path = new Float64Array(pts.lat.length * 2);
         for (let v = 0; v < pts.lat.length; v++) { path[v * 2] = pts.lon[v]; path[v * 2 + 1] = pts.lat[v]; }
         trackLines.push({ path, li, kind });
+        const c = new Array(pts.lat.length);
+        for (let v = 0; v < pts.lat.length; v++) c[v] = [pts.lon[v], pts.lat[v]];
+        trackFC.features.push({ type: 'Feature', properties: { li, kind }, geometry: { type: 'LineString', coordinates: c } });
       }
     });
+    map.getSource('bt-tracks')?.setData(trackFC);
   } catch (e) { console.warn('rail-lines', e); }
   try {
     await rt.load();
@@ -864,14 +956,27 @@ $('panelClose').onclick = clearSelection;
 
 // ---------- ホバー・クリック ----------
 const tip = $('tip');
+/** バスの路線の線（binary）を押した・乗せたときの系統 { f, r } */
+const lineObj = (info) => info.mapLine ?? null;
+/** 描画部品の上に何も無いときは、背景の地図のバスの路線の線を調べる */
+function withMapLine(info) {
+  if (info.object || (info.layer?.id === 'buses' && info.index >= 0) || info.x == null) return info;
+  const ml = mapLineAt(info.x, info.y);
+  if (!ml) return info;
+  if (ml.track) return { ...info, object: { li: ml.li, kind: ml.kind }, layer: { id: 'tracks' } };
+  return { ...info, mapLine: ml, layer: { id: ml.hw ? 'hwroutes' : 'routes' } };
+}
 // 吹き出しはマウスを乗せたときの案内。指で触ったときは出さない（タップの直後にも「乗せた」扱いの呼び出しが来て、
 // 選んだあとに吹き出しがまた出て情報欄に重なった。2026-10-04）
 let touchedAt = 0;
 addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') { touchedAt = Date.now(); tip.hidden = true; } }, true);
 map.on('movestart', () => { tip.hidden = true; });
 function onHover(info) {
-  map.getCanvas().style.cursor = info.object || (info.layer?.id === 'buses' && info.index >= 0) ? 'pointer' : '';
-  const hr = info.layer?.id === 'routes' && info.object ? { f: info.object.f, r: info.object.r } : null;
+  info = withMapLine(info);
+  hoverTrack = info.layer?.id === 'tracks' && info.object ? info.object.li : -1;
+  map.getCanvas().style.cursor = info.object || info.mapLine || (info.layer?.id === 'buses' && info.index >= 0) ? 'pointer' : '';
+  const lo = lineObj(info);
+  const hr = lo ? { f: lo.f, r: lo.r } : null;
   if ((hr?.f !== hoverRoute?.f) || (hr?.r !== hoverRoute?.r)) hoverRoute = hr;
   if (Date.now() - touchedAt < 1500) { tip.hidden = true; return; }
   const o = describe(info);
@@ -889,8 +994,8 @@ function describe(info) {
     const rt = feed.routes[pat.r];
     return `<b>${rt.mode ? `${MODES[rt.mode].label}　` : ''}${esc(routeName(rt))}　${esc(pat.h)} 行</b><span>${esc(agencyName(feed, rt))}</span>`;
   }
-  if (info.layer.id === 'routes' && info.object) {
-    const feed = feeds[info.object.f], rt = feed.routes[info.object.r];
+  if (lineObj(info)) {
+    const lo = lineObj(info), feed = feeds[lo.f], rt = feed.routes[lo.r];
     return `<b>${esc(routeName(rt))}</b><span>${esc(agencyName(feed, rt))}　押すと選べます</span>`;
   }
   if (info.layer.id === 'tracks' && info.object) {
@@ -921,6 +1026,7 @@ function describe(info) {
 }
 function onClick(info) {
   tip.hidden = true;
+  info = withMapLine(info);
   if (info.layer?.id === 'buses' && info.index >= 0 && info.index < nRun) {
     const j = runIdx[info.index];
     const fi = schedule.tf[j], k = schedule.ti[j];
@@ -929,7 +1035,7 @@ function onClick(info) {
     selectRoute(fi, pat.r, { keepTrip: true });
     return;
   }
-  if (info.layer?.id === 'routes' && info.object) { selectRoute(info.object.f, info.object.r); return; }
+  if (lineObj(info)) { const lo = lineObj(info); selectRoute(lo.f, lo.r); return; }
   if (info.layer?.id === 'areas' && info.object) { showArea(info.object); return; }
   if (info.layer?.id === 'tracks' && info.object) { showTrack(info.object, info.coordinate); return; }
   if (info.layer?.id === 'p11' && info.object) { showP11(info.object); return; }
@@ -1071,46 +1177,8 @@ function layers() {
     routesPending = true;
     (window.requestIdleCallback ?? ((f) => setTimeout(f, 50)))(() => { routesPending = false; buildRouteLines(); }, { timeout: 500 });
   }
-  if (lineOn.busline) {
-    buildBusLines();
-    // バス停を結んだ線。押すと系統を選ぶ（odpt の地図と同じく、ホバーで白く光る）
-    out.push(new PathLayer({
-      id: 'routes',
-      data: busLines,
-      getPath: (d) => d.path,
-      positionFormat: 'XY',
-      // 淡く細く（多くの系統が同じ道に重なって明るくなり、目立ちすぎた。利用者の指定。2026-10-05）
-      getColor: dark ? [235, 195, 120, 255] : [150, 90, 0, 255],
-      opacity: (dark ? (dim ? 7 : z >= 13 ? 17 : z >= 9 ? 13 : 10) : (dim ? 10 : z >= 13 ? 30 : 22)) / 255,
-      getWidth: 1,
-      widthScale: z >= 14 ? 1.5 : z >= 10 ? 1.1 : 0.9,
-      widthUnits: 'pixels',
-      widthMinPixels: 0.6,
-      pickable: z >= 12, // 線の判定（ホバー・押す）は拡大したときだけ。広域で判定すると重い
-      autoHighlight: true,
-      highlightColor: dark ? [255, 255, 255, 220] : [0, 90, 150, 220],
-      updateTriggers: { getColor: [dark] },
-    }));
-  }
-  if (lineOn.track && trackLines.length) {
-    // 線路はバス路線の上に描く。新幹線は青、在来線は明るい灰青。バス路線より目立つように太く明るく（淡くて見えなかった。利用者の指定。2026-10-05）
-    out.push(new PathLayer({
-      id: 'tracks',
-      data: trackLines,
-      getPath: (d) => d.path,
-      positionFormat: 'XY',
-      getColor: (d) => (dark ? (d.kind === 1 ? [110, 195, 255, 235] : [195, 210, 225, 200]) : (d.kind === 1 ? [25, 90, 200, 235] : [70, 85, 100, 210])),
-      getWidth: (d) => (d.kind === 1 ? 2.4 : 1.8),
-      widthScale: z >= 13 ? 1.5 : z >= 10 ? 1.2 : 1,
-      widthUnits: 'pixels',
-      widthMinPixels: 0.8,
-      opacity: dim ? 0.4 : 1,
-      pickable: z >= 9,
-      autoHighlight: true,
-      highlightColor: dark ? [220, 255, 230, 200] : [0, 90, 60, 200],
-      updateTriggers: { getColor: [dark] },
-    }));
-  }
+  if (lineOn.busline || lineOn.hwline || lineJob) buildBusLines();
+  syncMapLines(dim);
   if (selGeom) {
     out.push(new PathLayer({ id: 'selHalo', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [255, 255, 255, 200], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
     out.push(new PathLayer({ id: 'selLine', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [...selGeom.c, 255], getWidth: 3.5, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
