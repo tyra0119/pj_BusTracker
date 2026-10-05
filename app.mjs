@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=d19d91d-0904';
-import { holidayName } from './holidays.mjs?v=d19d91d-0904';
-import { Realtime } from './realtime.mjs?v=d19d91d-0904';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1c3ca63-0907';
+import { holidayName } from './holidays.mjs?v=1c3ca63-0907';
+import { Realtime } from './realtime.mjs?v=1c3ca63-0907';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -46,6 +46,38 @@ function japaneseLabels() {
   }
 }
 map.on('style.load', japaneseLabels);
+// 重ねる地図（国土地理院の地理院タイル）: 暗い地図だけでは地域が分かりにくいときに、地名・境界・航空写真を半透明で重ねる
+// （利用者の指定。2026-10-05）。地図の切り替え（setStyle）で消えるので、読み込むたびに足し直す。選んだものは覚えておく
+const GSI = {
+  pale: { url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', max: 18 },
+  std: { url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', max: 18 },
+  photo: { url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', max: 18 },
+};
+let overlayMap = '', overlayOp = 45;
+try { overlayMap = localStorage.getItem('bt.overlay') || ''; overlayOp = +(localStorage.getItem('bt.overlayOp') || 45); } catch { /* 使えなくてもよい */ }
+if (!GSI[overlayMap]) overlayMap = '';
+$('overlayMap').value = overlayMap; $('overlayOp').value = String(overlayOp); $('overlayOpWrap').hidden = !overlayMap;
+function applyOverlay() {
+  if (!map.getStyle()) return;
+  if (map.getLayer('gsi')) map.removeLayer('gsi');
+  if (map.getSource('gsi')) map.removeSource('gsi');
+  const g = GSI[overlayMap];
+  if (!g) return;
+  map.addSource('gsi', { type: 'raster', tiles: [g.url], tileSize: 256, minzoom: 2, maxzoom: g.max, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>' });
+  map.addLayer({ id: 'gsi', type: 'raster', source: 'gsi', paint: { 'raster-opacity': overlayOp / 100, 'raster-fade-duration': 0 } });
+}
+map.on('style.load', applyOverlay);
+$('overlayMap').onchange = (e) => {
+  overlayMap = e.target.value;
+  $('overlayOpWrap').hidden = !overlayMap;
+  try { localStorage.setItem('bt.overlay', overlayMap); } catch { /* 使えなくてもよい */ }
+  applyOverlay();
+};
+$('overlayOp').oninput = (e) => {
+  overlayOp = +e.target.value;
+  try { localStorage.setItem('bt.overlayOp', String(overlayOp)); } catch { /* 使えなくてもよい */ }
+  if (map.getLayer('gsi')) map.setPaintProperty('gsi', 'raster-opacity', overlayOp / 100);
+};
 // 地図のボタン: 拡大・縮小・方角（押すと北を上に戻す。右ドラッグ・2 本指で回せる）・現在地・全体表示
 map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: false }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showAccuracyCircle: true }), 'top-right');
@@ -132,7 +164,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=d19d91d-0904', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=1c3ca63-0907', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1413,7 +1445,9 @@ $('theme').onchange = (e) => {
   theme = e.target.value;
   try { localStorage.setItem('bt.theme', theme); } catch { /* 使えなくてもよい */ }
   document.documentElement.dataset.theme = theme;
+  // 切り替えでは style.load が来ないことがある（差分で入れ替えるため）。読み込み終わったら日本語名と重ねる地図をかけ直す
   map.setStyle(STYLES[theme]);
+  map.once('idle', () => { japaneseLabels(); applyOverlay(); });
   drawHist();
 };
 $('btnSources').onclick = () => $('dlgSources').showModal();
@@ -1623,6 +1657,7 @@ function renderSources() {
       <li>バスの走る道（形状の無いデータを道路に沿わせたもの）: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>（ODbL）</li>
       <li>鉄道の線路・列車の走る線: 国土数値情報（鉄道データ N02-24）国土交通省（CC BY 4.0）</li>
       <li>全国のバス停留所: 国土数値情報（バス停留所データ P11-22）国土交通省（CC BY 4.0）</li>
+      <li>重ねる地図（「表示」で選んだとき）: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（国土地理院。淡色地図・標準地図・全国最新写真（シームレス））</li>
     </ul>
     <p>データの作成日: ${esc(index.generated.slice(0, 10))}</p>
     <table><thead><tr><th>データ</th><th>入手先</th><th>ライセンス</th><th>便</th></tr></thead><tbody>${[...list].sort((a, b) => b.trips - a.trips).map(row).join('')}</tbody></table>`;
