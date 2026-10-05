@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=87f49ba-1118';
-import { holidayName } from './holidays.mjs?v=87f49ba-1118';
-import { Realtime } from './realtime.mjs?v=87f49ba-1118';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1fcc545-1123';
+import { holidayName } from './holidays.mjs?v=1fcc545-1123';
+import { Realtime } from './realtime.mjs?v=1fcc545-1123';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -165,7 +165,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=87f49ba-1118', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=1fcc545-1123', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -336,7 +336,9 @@ function updateHeads() {
 const trails = { data: [], w0: 0, w1: -1, base: 0, dirty: true, zoomKey: '', bounds: null };
 // 縮尺ごとの軌跡の細かさ（この距離 m 未満の点は間引く）。形状に沿ったまま間引くので、点（バス）と軌跡がずれない
 const zoomTrail = (z) => Math.min(1.5, Math.max(0.12, 2 ** ((10 - z) * 0.8)));
-function lod(z) { return z < 6 ? ['s', 1500] : z < 8 ? ['s', 400] : z < 10 ? ['s', 80] : z < 13 ? ['s', 15] : ['f', 0]; }
+// 軌跡の点の間隔: 1 画素の 0.6 倍（画面で見えない細かさは描かない）。整数の縮尺ごとに段階を分ける。
+// 以前は縮尺 8〜10 で 80 m おき（1 画素は約 350 m）で、Android 実機・×300・関東で 11 fps だった（2026-10-05）
+function lod(z) { const zi = Math.floor(z), gap = Math.round((128000 / 2 ** zi) * 0.6); return gap < 4 ? ['f', 0] : ['s', Math.min(1500, gap)]; }
 function viewBounds(pad) {
   const b = map.getBounds();
   const dx = (b.getEast() - b.getWest()) * pad, dy = (b.getNorth() - b.getSouth()) * pad;
@@ -350,7 +352,8 @@ function buildTrails() {
   const t = clock.t, L = trailLen ? Math.max(trailLen * zoomTrail(map.getZoom()), clock.speed * 1.2) : 0;
   trails.dirty = false;
   if (!L) { trails.data = []; trails.w0 = t; trails.w1 = t + 3600; return; }
-  const H = Math.min(5400, Math.max(600, clock.speed * 8));
+  // 先の何秒ぶんまで作っておくか（作り直しの回数と、描く点の数のつり合い）。スマホは描く点を減らすため半分
+  const H = Math.min(5400, Math.max(600, clock.speed * (MOBILE ? 4 : 8)));
   const z = map.getZoom();
   const [mode, gap] = lod(z);
   const bounds = MOBILE ? viewBounds(0.25) : z >= 7 ? viewBounds(0.6) : null;
