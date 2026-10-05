@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1c3ca63-0907';
-import { holidayName } from './holidays.mjs?v=1c3ca63-0907';
-import { Realtime } from './realtime.mjs?v=1c3ca63-0907';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=5ebdcb5-0914';
+import { holidayName } from './holidays.mjs?v=5ebdcb5-0914';
+import { Realtime } from './realtime.mjs?v=5ebdcb5-0914';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -164,7 +164,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=1c3ca63-0907', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=5ebdcb5-0914', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1071,25 +1071,6 @@ function layers() {
     routesPending = true;
     (window.requestIdleCallback ?? ((f) => setTimeout(f, 50)))(() => { routesPending = false; buildRouteLines(); }, { timeout: 500 });
   }
-  if (lineOn.track && trackLines.length) {
-    // 線路は背景。新幹線は少し明るく
-    out.push(new PathLayer({
-      id: 'tracks',
-      data: trackLines,
-      getPath: (d) => d.path,
-      positionFormat: 'XY',
-      getColor: (d) => (dark ? (d.kind === 1 ? [150, 200, 255, 120] : [150, 175, 165, 90]) : (d.kind === 1 ? [40, 90, 170, 150] : [70, 90, 85, 110])),
-      getWidth: (d) => (d.kind === 1 ? 1.6 : 1.2),
-      widthScale: z >= 13 ? 1.6 : z >= 10 ? 1.2 : 1,
-      widthUnits: 'pixels',
-      widthMinPixels: 0.8,
-      opacity: dim ? 0.4 : 1,
-      pickable: z >= 9,
-      autoHighlight: true,
-      highlightColor: dark ? [220, 255, 230, 200] : [0, 90, 60, 200],
-      updateTriggers: { getColor: [dark] },
-    }));
-  }
   if (lineOn.busline) {
     buildBusLines();
     // バス停を結んだ線。押すと系統を選ぶ（odpt の地図と同じく、ホバーで白く光る）
@@ -1098,15 +1079,35 @@ function layers() {
       data: busLines,
       getPath: (d) => d.path,
       positionFormat: 'XY',
-      getColor: dark ? [255, 214, 120, 255] : [150, 90, 0, 255],
-      opacity: (dark ? (dim ? 14 : z >= 13 ? 60 : z >= 9 ? 42 : 30) : (dim ? 18 : z >= 13 ? 90 : 55)) / 255,
+      // 淡く細く（多くの系統が同じ道に重なって明るくなり、目立ちすぎた。利用者の指定。2026-10-05）
+      getColor: dark ? [235, 195, 120, 255] : [150, 90, 0, 255],
+      opacity: (dark ? (dim ? 7 : z >= 13 ? 17 : z >= 9 ? 13 : 10) : (dim ? 10 : z >= 13 ? 30 : 22)) / 255,
       getWidth: 1,
-      widthScale: z >= 14 ? 2.2 : z >= 10 ? 1.4 : 1,
+      widthScale: z >= 14 ? 1.5 : z >= 10 ? 1.1 : 0.9,
       widthUnits: 'pixels',
       widthMinPixels: 0.6,
       pickable: z >= 12, // 線の判定（ホバー・押す）は拡大したときだけ。広域で判定すると重い
       autoHighlight: true,
       highlightColor: dark ? [255, 255, 255, 220] : [0, 90, 150, 220],
+      updateTriggers: { getColor: [dark] },
+    }));
+  }
+  if (lineOn.track && trackLines.length) {
+    // 線路はバス路線の上に描く。新幹線は青、在来線は明るい灰青。バス路線より目立つように太く明るく（淡くて見えなかった。利用者の指定。2026-10-05）
+    out.push(new PathLayer({
+      id: 'tracks',
+      data: trackLines,
+      getPath: (d) => d.path,
+      positionFormat: 'XY',
+      getColor: (d) => (dark ? (d.kind === 1 ? [110, 195, 255, 235] : [195, 210, 225, 200]) : (d.kind === 1 ? [25, 90, 200, 235] : [70, 85, 100, 210])),
+      getWidth: (d) => (d.kind === 1 ? 2.4 : 1.8),
+      widthScale: z >= 13 ? 1.5 : z >= 10 ? 1.2 : 1,
+      widthUnits: 'pixels',
+      widthMinPixels: 0.8,
+      opacity: dim ? 0.4 : 1,
+      pickable: z >= 9,
+      autoHighlight: true,
+      highlightColor: dark ? [220, 255, 230, 200] : [0, 90, 60, 200],
       updateTriggers: { getColor: [dark] },
     }));
   }
