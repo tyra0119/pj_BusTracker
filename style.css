@@ -83,7 +83,8 @@ body.hinting #rtChip button[aria-pressed="false"], body.hinting #lineChips butto
 #panel .badge.m3 { background: rgba(255, 140, 70, 0.18); color: #ff8c46; }
 .maplibregl-ctrl .fitall { display: flex; align-items: center; justify-content: center; color: #333; }
 #head .load { font-size: 12px; color: var(--muted); display: inline-block; width: 17em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-#head .search { position: relative; padding: 6px; }
+/* 候補一覧は後ろに並ぶ「表示・出典・使い方」より手前に（重なっていた。2026-10-05） */
+#head .search { position: relative; padding: 6px; z-index: 6; }
 #head .search input { width: 240px; }
 #qres { position: absolute; top: calc(100% + 6px); left: 0; width: 340px; max-height: 50vh; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 10px; }
 #qres li { padding: 7px 9px; border-radius: 7px; cursor: pointer; }
