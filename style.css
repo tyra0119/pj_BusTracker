@@ -63,7 +63,7 @@ select option { background: var(--panel-solid); }
 #head .chips button.rtc i { width: 10px; height: 10px; border-radius: 50%; background: conic-gradient(#50e182 0 33%, #ffc800 0 66%, #ff5050 0); box-shadow: 0 0 0 1.5px #fff; }
 #head .chips button.rtc[aria-pressed="false"] i { background: transparent; }
 /* 開いたときの説明のカード */
-#hint { position: fixed; left: 12px; top: 84px; width: 340px; max-width: calc(100vw - 24px); z-index: 6; background: var(--panel-solid); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px 10px; font-size: 12.5px; line-height: 1.55; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+#hint { position: fixed; left: 12px; top: 84px; width: 340px; max-width: calc(100vw - 24px); overflow-y: auto; z-index: 6; background: var(--panel-solid); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px 10px; font-size: 12.5px; line-height: 1.55; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
 #hint .close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; padding: 0; border-radius: 50%; }
 #hint b { display: block; margin: 0 26px 6px 0; font-size: 13px; }
 #hint dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; }

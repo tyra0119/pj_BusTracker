@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=332694d-1551';
-import { holidayName } from './holidays.mjs?v=332694d-1551';
-import { Realtime } from './realtime.mjs?v=332694d-1551';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=91a8013-1612';
+import { holidayName } from './holidays.mjs?v=91a8013-1612';
+import { Realtime } from './realtime.mjs?v=91a8013-1612';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -183,7 +183,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610050651');
+  const res = await fetch('./data/index.json?v=202610050711');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -198,7 +198,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=332694d-1551', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=91a8013-1612', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -206,7 +206,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050651`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610050711`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -1660,13 +1660,18 @@ function placePanel() {
   if (tr) tr.style.top = `${Math.ceil(head.bottom + 6)}px`;
   if (br) br.style.bottom = `${Math.ceil(innerHeight - bar.top + 6)}px`;
   const ctrlBottom = tr ? tr.getBoundingClientRect().bottom : head.bottom;
-  const hint = $('hint');
-  if (hint && !hint.hidden) hint.style.top = `${Math.ceil((narrow ? Math.max(ctrlBottom, head.bottom) : head.bottom) + 8)}px`;
   const p = $('panel').style;
   // 情報欄の下端は、下の欄と地図の出典の表示のうち上にある方の上で止める
   const at = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect();
   const floor = at && at.height ? Math.min(bar.top, at.top) : bar.top;
   const gapBottom = Math.ceil(innerHeight - floor + 8);
+  // 開いたときの説明も同じところで止め、収まらなければ中を送る（スマホで下端が地図の出典の「i」にかかっていた。2026-10-05）
+  const hint = $('hint');
+  if (hint && !hint.hidden) {
+    const top = Math.ceil((narrow ? Math.max(ctrlBottom, head.bottom) : head.bottom) + 8);
+    hint.style.top = `${top}px`;
+    hint.style.maxHeight = `${Math.max(120, innerHeight - gapBottom - top)}px`;
+  }
   if (narrow) {
     // スマホ: 地図のボタン（横一列）の下から、下の欄の上まで
     const top = Math.ceil(Math.max(ctrlBottom, head.bottom) + 8);
