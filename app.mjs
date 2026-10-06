@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=88a220c-1808';
-import { holidayName } from './holidays.mjs?v=88a220c-1808';
-import { Realtime } from './realtime.mjs?v=88a220c-1808';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=6e3a230-2122';
+import { holidayName } from './holidays.mjs?v=6e3a230-2122';
+import { Realtime } from './realtime.mjs?v=6e3a230-2122';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -69,6 +69,36 @@ function applyOverlay() {
   map.addLayer({ id: 'gsi', type: 'raster', source: 'gsi', paint: { 'raster-opacity': overlayOp / 100, 'raster-fade-duration': 0 } });
 }
 map.on('style.load', applyOverlay);
+// 人口（令和 2 年国勢調査・3 次メッシュ＝約 1 km 四方。利用者の指定。2026-10-06）: 1 km² あたりの人数を色にした画像のタイル
+// （scripts/fetch-pop-mesh.mjs → build-pop-tiles.mjs）。バスの路線・線路より下に半透明で。拡大するとマス目のまま大きく（nearest）
+// 色は build-pop-tiles.mjs の POP_STEPS と同じ（下限の人数・RGBA）
+const POP_LEGEND = [[1, [70, 50, 130, 70]], [10, [95, 62, 160, 95]], [50, [125, 75, 190, 120]], [200, [160, 85, 205, 140]], [1000, [195, 95, 200, 155]], [3000, [225, 110, 185, 170]], [8000, [245, 140, 200, 185]]];
+let popOn = false, popOp = 60;
+try { popOn = localStorage.getItem('bt.pop') === '1'; popOp = +(localStorage.getItem('bt.popOp') || 60); } catch { /* 使えなくてもよい */ }
+$('popOn').checked = popOn; $('popOp').value = String(popOp); $('popWrap').hidden = !popOn;
+$('popLegend').innerHTML = POP_LEGEND.map(([lo, c], i) => `<span><i style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, c[3] / 255 + 0.15).toFixed(2)})"></i>${lo.toLocaleString()}${i + 1 < POP_LEGEND.length ? `〜${(POP_LEGEND[i + 1][0] - 1).toLocaleString()}` : ' 以上'}</span>`).join('') + '<small>1 km² あたりの人数（令和 2 年国勢調査）</small>';
+// タイルは人の住む所の分だけ（data/pop/index.json）。一覧に無いタイル（海など）は取りに行かず、空の画像を返す（404 が出ていた）
+let popIndex = null;
+const EMPTY_PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII='), (c) => c.charCodeAt(0)).buffer;
+maplibregl.addProtocol('btpop', async (params, abort) => {
+  const key = params.url.match(/btpop:\/\/(\d+\/\d+\/\d+)/)?.[1];
+  const v = document.querySelector('meta[name="build"]')?.content ?? '';
+  popIndex ??= fetch(`./data/pop/index.json${v ? `?v=${v}` : ''}`).then((r) => r.json()).then((a) => new Set(a)).catch(() => new Set());
+  if (!key || !(await popIndex).has(key)) return { data: EMPTY_PNG };
+  const r = await fetch(`./data/pop/${key}.png${v ? `?v=${v}` : ''}`, { signal: abort.signal });
+  return { data: await r.arrayBuffer() };
+});
+function applyPop() {
+  if (!map.getStyle()) return;
+  if (map.getLayer('bt-pop')) map.removeLayer('bt-pop');
+  if (map.getSource('bt-pop')) map.removeSource('bt-pop');
+  if (!popOn) return;
+  map.addSource('bt-pop', { type: 'raster', tiles: ['btpop://{z}/{x}/{y}'], tileSize: 256, minzoom: 5, maxzoom: 10, bounds: [122, 20, 154, 46],
+    attribution: '人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）' });
+  const below = map.getLayer('bt-buslines') ? 'bt-buslines' : map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+  map.addLayer({ id: 'bt-pop', type: 'raster', source: 'bt-pop', paint: { 'raster-opacity': popOp / 100, 'raster-resampling': 'nearest', 'raster-fade-duration': 0 } }, below);
+}
+map.on('style.load', applyPop);
 // 3D の建物（利用者の指定。2026-10-05）: 背景の地図（CARTO）の建物（render_height・render_min_height）を立ち上げる。
 // 縮尺 14 以上だけ描く（広域では建物の層が無く、重さに影響しない）。オンにすると地図を傾け、オフで真上に戻す
 let bldg3d = false;
@@ -104,6 +134,17 @@ $('overlayMap').onchange = (e) => {
   $('overlayOpWrap').hidden = !overlayMap;
   try { localStorage.setItem('bt.overlay', overlayMap); } catch { /* 使えなくてもよい */ }
   applyOverlay();
+};
+$('popOn').onchange = (e) => {
+  popOn = e.target.checked;
+  $('popWrap').hidden = !popOn;
+  try { localStorage.setItem('bt.pop', popOn ? '1' : '0'); } catch { /* 使えなくてもよい */ }
+  applyPop();
+};
+$('popOp').oninput = (e) => {
+  popOp = +e.target.value;
+  try { localStorage.setItem('bt.popOp', String(popOp)); } catch { /* 使えなくてもよい */ }
+  if (map.getLayer('bt-pop')) map.setPaintProperty('bt-pop', 'raster-opacity', popOp / 100);
 };
 $('overlayOp').oninput = (e) => {
   overlayOp = +e.target.value;
@@ -202,7 +243,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=88a220c-1808', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=6e3a230-2122', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1589,7 +1630,7 @@ $('theme').onchange = (e) => {
   document.documentElement.dataset.theme = theme;
   // 切り替えでは style.load が来ないことがある（差分で入れ替えるため）。読み込み終わったら日本語名と重ねる地図をかけ直す
   map.setStyle(STYLES[theme]);
-  map.once('idle', () => { japaneseLabels(); applyOverlay(); applyBuildings(); });
+  map.once('idle', () => { japaneseLabels(); applyOverlay(); applyBuildings(); applyPop(); });
   drawHist();
 };
 $('btnSources').onclick = () => $('dlgSources').showModal();
@@ -1850,6 +1891,7 @@ function renderSources() {
       <li>鉄道の線路・列車の走る線: 国土数値情報（鉄道データ N02-24）国土交通省（CC BY 4.0）</li>
       <li>全国のバス停留所: 国土数値情報（バス停留所データ P11-22）国土交通省（CC BY 4.0）</li>
       <li>重ねる地図（「表示」で選んだとき）: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（国土地理院。淡色地図・標準地図・全国最新写真（シームレス））</li>
+      <li>人口（「表示」で選んだとき）: 出典 <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">政府統計の総合窓口（e-Stat）</a>、令和 2 年国勢調査 地域メッシュ統計（3 次メッシュ。総務省統計局）。1 km² あたりの人数を色にして加工（政府標準利用規約 第 2.0 版）</li>
     </ul>
     <p>データの作成日: ${esc(index.generated.slice(0, 10))}</p>
     <table><thead><tr><th>データ</th><th>入手先</th><th>ライセンス</th><th>便</th></tr></thead><tbody>${[...list].sort((a, b) => b.trips - a.trips).map(row).join('')}</tbody></table>`;

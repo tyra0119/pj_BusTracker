@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="88a220c-1808">
+<meta charset="utf-8"><meta name="build" content="6e3a230-2122">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス・鉄道軌跡マップ</title>
 <!-- 地図の軌跡（シアン）と乗り物（黄）。指定が無いとブラウザがサイトの一番上の /favicon.ico を取りに行き 404 になっていた -->
@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
 <link rel="preconnect" href="https://tiles.basemaps.cartocdn.com" crossorigin>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=88a220c-1808">
+<link rel="stylesheet" href="./style.css?v=6e3a230-2122">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -65,6 +65,13 @@
       </select>
     </label>
     <label class="check"><input id="bldg3d" type="checkbox"> 3D の建物（地図を傾けて、拡大すると建物が立ち上がる）</label>
+    <label class="check"><input id="popOn" type="checkbox"> 人口（国勢調査 2020・約 1 km 四方）</label>
+    <div id="popWrap" hidden>
+      <label>人口の濃さ
+        <input id="popOp" type="range" min="10" max="100" step="5" value="60">
+      </label>
+      <div class="poplegend" id="popLegend" aria-label="人口の凡例（1 km² あたり）"></div>
+    </div>
     <label id="overlayOpWrap" hidden>重ねる地図の濃さ
       <input id="overlayOp" type="range" min="10" max="100" step="5" value="45">
     </label>
@@ -133,6 +140,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=88a220c-1808"></script>
+<script type="module" src="./app.mjs?v=6e3a230-2122"></script>
 </body>
 </html>

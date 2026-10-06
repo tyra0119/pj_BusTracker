@@ -209,3 +209,8 @@ dialog .close { position: absolute; }
   .maplibregl-ctrl-top-right .maplibregl-ctrl-group { display: flex; }
   .maplibregl-ctrl-top-right .maplibregl-ctrl-group button + button { border-top: none; border-left: 1px solid #ddd; }
 }
+/* 人口（国勢調査）の凡例: 色見本と 1 km² あたりの人数 */
+.poplegend { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 4px 0 2px; font-size: 11px; color: var(--muted); }
+.poplegend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.poplegend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.poplegend small { flex-basis: 100%; font-size: 10.5px; }
