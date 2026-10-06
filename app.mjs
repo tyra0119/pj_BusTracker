@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=6e3a230-2122';
-import { holidayName } from './holidays.mjs?v=6e3a230-2122';
-import { Realtime } from './realtime.mjs?v=6e3a230-2122';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=12b8b75-2128';
+import { holidayName } from './holidays.mjs?v=12b8b75-2128';
+import { Realtime } from './realtime.mjs?v=12b8b75-2128';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -243,7 +243,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=6e3a230-2122', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=12b8b75-2128', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
