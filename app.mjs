@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=3dfcef6-1728';
-import { holidayName } from './holidays.mjs?v=3dfcef6-1728';
-import { Realtime } from './realtime.mjs?v=3dfcef6-1728';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=1c1dab1-1800';
+import { holidayName } from './holidays.mjs?v=1c1dab1-1800';
+import { Realtime } from './realtime.mjs?v=1c1dab1-1800';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -263,7 +263,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=3dfcef6-1728', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=1c1dab1-1800', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1592,8 +1592,12 @@ function placeSettings() {
   const r = $('btnSettings').getBoundingClientRect();
   // スマホでは地図のボタンがすぐ下に横一列に並ぶので、その下に
   const tr = innerWidth < 760 ? document.querySelector('.maplibregl-ctrl-top-right') : null;
-  p.style.top = `${Math.round(Math.max(r.bottom, tr ? tr.getBoundingClientRect().bottom : 0) + 6)}px`;
-  p.style.right = `${Math.max(8, Math.round(innerWidth - r.right))}px`;
+  const top = Math.round(Math.max(r.bottom, tr ? tr.getBoundingClientRect().bottom : 0) + 6);
+  p.style.top = `${top}px`;
+  // 下の欄（時刻）の上で止め、入りきらなければ中を送る（スマホで徒歩圏の凡例まで出すと下の欄に重なった。2026-10-11）
+  p.style.maxHeight = `${Math.max(160, Math.round($('bar').getBoundingClientRect().top - top - 8))}px`;
+  // 「表示」の右端にそろえる。左端が画面の外に出るときは内側に寄せる（スマホで幅 300 px の欄が左にはみ出した。2026-10-11）
+  p.style.right = `${Math.max(8, Math.min(Math.round(innerWidth - r.right), innerWidth - p.offsetWidth - 8))}px`;
 }
 $('btnSettings').onclick = () => { const p = $('settings'); p.hidden = !p.hidden; $('btnSettings').setAttribute('aria-expanded', String(!p.hidden)); placeSettings(); };
 addEventListener('resize', placeSettings);

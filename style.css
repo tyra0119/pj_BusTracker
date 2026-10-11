@@ -95,12 +95,14 @@ body.hinting #rtChip button[aria-pressed="false"], body.hinting #lineChips butto
 #qres li:hover, #qres li.on { background: var(--btn-hover); }
 #qres li small { display: block; color: var(--muted); font-size: 11px; }
 #head .tools { display: flex; gap: 6px; padding: 6px; margin-left: auto; }
-.pop { position: fixed; top: 70px; right: 12px; max-width: calc(100vw - 16px); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; z-index: 7; }
+/* 幅は決めておく（中身の一番長い選択肢・凡例の説明文に合わせて横に広がっていた。2026-10-11） */
+.pop { position: fixed; top: 70px; right: 12px; width: 300px; max-width: calc(100vw - 16px); box-sizing: border-box; overflow-y: auto; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; z-index: 7; }
 .pop[hidden] { display: none; }
 .pop label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .pop label[hidden] { display: none; }
 .pop label.check { display: flex; gap: 6px; align-items: center; color: var(--fg, inherit); max-width: 260px; line-height: 1.4; }
 .pop input[type="range"] { width: 100%; accent-color: var(--accent); }
+.pop select { width: 100%; min-width: 0; }
 
 /* 右の情報欄 */
 #panel { position: fixed; top: 84px; right: 56px; width: 360px; max-height: calc(100vh - 84px - 150px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 10px; z-index: 4; backdrop-filter: blur(6px); }

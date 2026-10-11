@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="3dfcef6-1728">
+<meta charset="utf-8"><meta name="build" content="1c1dab1-1800">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス・鉄道軌跡マップ</title>
 <!-- 地図の軌跡（シアン）と乗り物（黄）。指定が無いとブラウザがサイトの一番上の /favicon.ico を取りに行き 404 になっていた -->
@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
 <link rel="preconnect" href="https://tiles.basemaps.cartocdn.com" crossorigin>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=3dfcef6-1728">
+<link rel="stylesheet" href="./style.css?v=1c1dab1-1800">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -69,7 +69,7 @@
       <select id="popMode">
         <option value="" selected>なし</option>
         <option value="pop">人口（約 1 km 四方）</option>
-        <option value="walk">公共交通の徒歩圏の外の人口（約 250 m 四方）</option>
+        <option value="walk">徒歩圏の外の人口（約 250 m 四方）</option>
       </select>
     </label>
     <div id="popWrap" hidden>
@@ -146,6 +146,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=3dfcef6-1728"></script>
+<script type="module" src="./app.mjs?v=1c1dab1-1800"></script>
 </body>
 </html>
