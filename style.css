@@ -223,6 +223,8 @@ dialog .close { position: absolute; }
 .gaplist b { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #ffd23c; color: #1a1405; font-size: 11px; }
 .gaplist span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gaplist em { font-style: normal; color: var(--muted); font-size: 11px; }
+/* バス・列車の層（deck.gl）より上に（走る点が吹き出しの文字に重なった） */
+.gap-pop { z-index: 4; }
 .gap-pop .maplibregl-popup-content { background: var(--panel-solid); color: var(--fg, #e8edf2); border: 1px solid rgba(255, 210, 60, 0.6); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; }
 .gap-pop .maplibregl-popup-tip { border-top-color: var(--panel-solid); border-bottom-color: var(--panel-solid); }
 .gap-pop dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 6px 0; }
