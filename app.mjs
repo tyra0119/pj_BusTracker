@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=81e5bb6-2217';
-import { holidayName } from './holidays.mjs?v=81e5bb6-2217';
-import { Realtime } from './realtime.mjs?v=81e5bb6-2217';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=3dfcef6-1728';
+import { holidayName } from './holidays.mjs?v=3dfcef6-1728';
+import { Realtime } from './realtime.mjs?v=3dfcef6-1728';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -69,32 +69,51 @@ function applyOverlay() {
   map.addLayer({ id: 'gsi', type: 'raster', source: 'gsi', paint: { 'raster-opacity': overlayOp / 100, 'raster-fade-duration': 0 } });
 }
 map.on('style.load', applyOverlay);
-// 人口（令和 2 年国勢調査・3 次メッシュ＝約 1 km 四方。利用者の指定。2026-10-06）: 1 km² あたりの人数を色にした画像のタイル
-// （scripts/fetch-pop-mesh.mjs → build-pop-tiles.mjs）。バスの路線・線路より下に半透明で。拡大するとマス目のまま大きく（nearest）
-// 色は build-pop-tiles.mjs の POP_STEPS と同じ（下限の人数・RGBA）
-const POP_LEGEND = [[1, [70, 50, 130, 70]], [10, [95, 62, 160, 95]], [50, [125, 75, 190, 120]], [200, [160, 85, 205, 140]], [1000, [195, 95, 200, 155]], [3000, [225, 110, 185, 170]], [8000, [245, 140, 200, 185]]];
-let popOn = false, popOp = 60;
-try { popOn = localStorage.getItem('bt.pop') === '1'; popOp = +(localStorage.getItem('bt.popOp') || 60); } catch { /* 使えなくてもよい */ }
-$('popOn').checked = popOn; $('popOp').value = String(popOp); $('popWrap').hidden = !popOn;
-$('popLegend').innerHTML = POP_LEGEND.map(([lo, c], i) => `<span><i style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, c[3] / 255 + 0.15).toFixed(2)})"></i>${lo.toLocaleString()}${i + 1 < POP_LEGEND.length ? `〜${(POP_LEGEND[i + 1][0] - 1).toLocaleString()}` : ' 以上'}</span>`).join('') + '<small>1 km² あたりの人数（令和 2 年国勢調査）</small>';
-// タイルは人の住む所の分だけ（data/pop/index.json）。一覧に無いタイル（海など）は取りに行かず、空の画像を返す（404 が出ていた）
-let popIndex = null;
+// 人口（令和 2 年国勢調査。利用者の指定）: 色を塗った画像のタイル。バスの路線・線路より下に半透明で。拡大するとマス目のまま大きく（nearest）
+//  pop: 人口（3 次メッシュ＝約 1 km 四方。2026-10-06。scripts/fetch-pop-mesh.mjs → build-pop-tiles.mjs）
+//  walk: 公共交通の徒歩圏（バス停 300 m・駅 800 m）の外に住む人（5 次メッシュ＝約 250 m 四方。2026-10-11。build-coverage.mjs）
+// 色は build-pop-tiles.mjs の POP_STEPS・build-coverage.mjs の WALK_STEPS と同じ（1 km² あたりの人数の下限・RGBA）
+const POP_MODES = {
+  pop: { dir: 'pop', max: 10, steps: [[1, [70, 50, 130, 70]], [10, [95, 62, 160, 95]], [50, [125, 75, 190, 120]], [200, [160, 85, 205, 140]], [1000, [195, 95, 200, 155]], [3000, [225, 110, 185, 170]], [8000, [245, 140, 200, 185]]], note: '1 km² あたりの人数（令和 2 年国勢調査）' },
+  walk: { dir: 'walk', max: 11, steps: [[1, [130, 40, 40, 80]], [20, [170, 45, 40, 110]], [100, [205, 60, 45, 140]], [500, [235, 85, 55, 165]], [2000, [255, 130, 80, 190]]], note: 'バス停から 300 m・駅から 800 m の外に住む人（1 km² あたり。令和 2 年国勢調査・約 250 m 四方）' },
+};
+let popMode = '', popOp = 60;
+try { const v = localStorage.getItem('bt.pop'); popMode = v === '1' ? 'pop' : POP_MODES[v] ? v : ''; popOp = +(localStorage.getItem('bt.popOp') || 60); } catch { /* 使えなくてもよい */ }
+$('popMode').value = popMode; $('popOp').value = String(popOp); $('popWrap').hidden = !popMode;
+const buildVer = () => document.querySelector('meta[name="build"]')?.content ?? '';
+let walkSummary = null;
+function renderPopLegend() {
+  const m = POP_MODES[popMode];
+  if (!m) return;
+  let h = m.steps.map(([lo, c], i) => `<span><i style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, c[3] / 255 + 0.15).toFixed(2)})"></i>${lo.toLocaleString()}${i + 1 < m.steps.length ? `〜${(m.steps[i + 1][0] - 1).toLocaleString()}` : ' 以上'}</span>`).join('') + `<small>${m.note}</small>`;
+  if (popMode === 'walk' && walkSummary) {
+    const s = walkSummary, top = [...s.prefs].sort((a, b) => b.pct - a.pct).slice(0, 3);
+    h += `<small>全国で約 ${Math.round(s.outside / 1e4).toLocaleString()} 万人（${((s.outside / s.total) * 100).toFixed(1)}%）が徒歩圏の外${top.length ? `。割合の高い県: ${top.map((x) => `${x.pref} ${x.pct}%`).join('・')}` : ''}</small>`;
+  }
+  $('popLegend').innerHTML = h;
+}
+renderPopLegend();
+// タイルは人の住む所の分だけ（data/<pop|walk>/index.json）。一覧に無いタイル（海など）は取りに行かず、空の画像を返す（404 が出ていた）
+const popIndex = {};
 const EMPTY_PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII='), (c) => c.charCodeAt(0)).buffer;
 maplibregl.addProtocol('btpop', async (params, abort) => {
-  const key = params.url.match(/btpop:\/\/(\d+\/\d+\/\d+)/)?.[1];
-  const v = document.querySelector('meta[name="build"]')?.content ?? '';
-  popIndex ??= fetch(`./data/pop/index.json${v ? `?v=${v}` : ''}`).then((r) => r.json()).then((a) => new Set(a)).catch(() => new Set());
-  if (!key || !(await popIndex).has(key)) return { data: EMPTY_PNG };
-  const r = await fetch(`./data/pop/${key}.png${v ? `?v=${v}` : ''}`, { signal: abort.signal });
+  const m = params.url.match(/btpop:\/\/(\w+)\/(\d+\/\d+\/\d+)/);
+  if (!m || !POP_MODES[m[1]]) return { data: EMPTY_PNG };
+  const [, dir, key] = m, v = buildVer();
+  popIndex[dir] ??= fetch(`./data/${dir}/index.json${v ? `?v=${v}` : ''}`).then((r) => r.json()).then((a) => new Set(a)).catch(() => new Set());
+  if (!(await popIndex[dir]).has(key)) return { data: EMPTY_PNG };
+  const r = await fetch(`./data/${dir}/${key}.png${v ? `?v=${v}` : ''}`, { signal: abort.signal });
   return { data: await r.arrayBuffer() };
 });
 function applyPop() {
   if (!map.getStyle()) return;
   if (map.getLayer('bt-pop')) map.removeLayer('bt-pop');
   if (map.getSource('bt-pop')) map.removeSource('bt-pop');
-  if (!popOn) return;
-  map.addSource('bt-pop', { type: 'raster', tiles: ['btpop://{z}/{x}/{y}'], tileSize: 256, minzoom: 5, maxzoom: 10, bounds: [122, 20, 154, 46],
-    attribution: '人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）' });
+  const m = POP_MODES[popMode];
+  if (!m) return;
+  if (popMode === 'walk' && !walkSummary) fetch(`./data/walk/summary.json?v=${buildVer()}`).then((r) => r.json()).then((s) => { walkSummary = s; renderPopLegend(); }).catch(() => {});
+  map.addSource('bt-pop', { type: 'raster', tiles: [`btpop://${m.dir}/{z}/{x}/{y}`], tileSize: 256, minzoom: 5, maxzoom: m.max, bounds: [122, 20, 154, 46],
+    attribution: popMode === 'walk' ? '徒歩圏の外の人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）・国土数値情報（バス停・駅）から作成' : '人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）' });
   const below = map.getLayer('bt-buslines') ? 'bt-buslines' : map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
   map.addLayer({ id: 'bt-pop', type: 'raster', source: 'bt-pop', paint: { 'raster-opacity': popOp / 100, 'raster-resampling': 'nearest', 'raster-fade-duration': 0 } }, below);
 }
@@ -135,10 +154,11 @@ $('overlayMap').onchange = (e) => {
   try { localStorage.setItem('bt.overlay', overlayMap); } catch { /* 使えなくてもよい */ }
   applyOverlay();
 };
-$('popOn').onchange = (e) => {
-  popOn = e.target.checked;
-  $('popWrap').hidden = !popOn;
-  try { localStorage.setItem('bt.pop', popOn ? '1' : '0'); } catch { /* 使えなくてもよい */ }
+$('popMode').onchange = (e) => {
+  popMode = e.target.value;
+  $('popWrap').hidden = !popMode;
+  try { localStorage.setItem('bt.pop', popMode); } catch { /* 使えなくてもよい */ }
+  renderPopLegend();
   applyPop();
 };
 $('popOp').oninput = (e) => {
@@ -243,7 +263,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=81e5bb6-2217', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=3dfcef6-1728', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -1891,7 +1911,7 @@ function renderSources() {
       <li>鉄道の線路・列車の走る線: 国土数値情報（鉄道データ N02-24）国土交通省（CC BY 4.0）</li>
       <li>全国のバス停留所: 国土数値情報（バス停留所データ P11-22）国土交通省（CC BY 4.0）</li>
       <li>重ねる地図（「表示」で選んだとき）: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（国土地理院。淡色地図・標準地図・全国最新写真（シームレス））</li>
-      <li>人口（「表示」で選んだとき）: 出典 <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">政府統計の総合窓口（e-Stat）</a>、令和 2 年国勢調査 地域メッシュ統計（3 次メッシュ。総務省統計局）。1 km² あたりの人数を色にして加工（政府標準利用規約 第 2.0 版）</li>
+      <li>人口（「表示」で選んだとき）: 出典 <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">政府統計の総合窓口（e-Stat）</a>、令和 2 年国勢調査 地域メッシュ統計（3 次メッシュ・5 次メッシュ。総務省統計局）。1 km² あたりの人数を色にして加工。公共交通の徒歩圏の外の人口は、国土数値情報のバス停留所データ（P11）・鉄道データ（N02）の駅と時刻表データのバス停から、バス停 300 m・駅 800 m の外を計算（政府標準利用規約 第 2.0 版）</li>
     </ul>
     <p>データの作成日: ${esc(index.generated.slice(0, 10))}</p>
     <table><thead><tr><th>データ</th><th>入手先</th><th>ライセンス</th><th>便</th></tr></thead><tbody>${[...list].sort((a, b) => b.trips - a.trips).map(row).join('')}</tbody></table>`;
