@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=d340329-2155';
-import { holidayName } from './holidays.mjs?v=d340329-2155';
-import { Realtime } from './realtime.mjs?v=d340329-2155';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=427af30-2213';
+import { holidayName } from './holidays.mjs?v=427af30-2213';
+import { Realtime } from './realtime.mjs?v=427af30-2213';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -93,7 +93,7 @@ function renderPopLegend() {
   if (popMode === 'gaps') {
     // 順位の一覧（押すとその地区へ）
     $('popLegend').innerHTML = gapData
-      ? `<small>人が多いのに、バス停 300 m・駅 800 m の徒歩圏の外に住む人が多い地区（地区の中でいちばん密な 1 km² の圏外の人数と、そこからバス停・駅までの遠さで順位。全国 ${gapData.candidates.toLocaleString()} 地区の上位 ${gapData.gaps.length}）</small><ol class="gaplist">${gapData.gaps.map((g) => `<li><button type="button" data-gap="${g.rank - 1}"><b>${g.rank}</b><span>${esc(gapPlace(g))}</span><em>${fmtPeople(g.peak ?? g.outside)}/km²</em></button></li>`).join('')}</ol><small>国土数値情報（2022 年）のバス停・駅で判定した候補です。その後にできた路線・デマンド交通・送迎バスは含みません</small>`
+      ? `<small>人が多いのに、バス停 300 m・駅 800 m の徒歩圏の外に住む人が多い地区。柏市の公共交通空白不便地域の評価にならい、地区の中でいちばん密な 1 km² の「圏外の人口」「65 歳以上の圏外の人口」「駅・バス停までの遠さ」を全国 ${gapData.candidates.toLocaleString()} 地区の中で比べて各 100 点、合計 300 点で順位（上位 ${gapData.gaps.length}）</small><ol class="gaplist">${gapData.gaps.map((g) => `<li><button type="button" data-gap="${g.rank - 1}"><b>${g.rank}</b><span>${esc(gapPlace(g))}</span><em>${g.points ? `${g.points.total} 点` : `${fmtPeople(g.peak ?? g.outside)}/km²`}</em></button></li>`).join('')}</ol><small>国土数値情報（2022 年）のバス停・駅で判定した候補です。その後にできた路線・デマンド交通・送迎バスは含みません</small>`
       : '<small>読み込んでいます…</small>';
     return;
   }
@@ -179,20 +179,24 @@ function showGap(i, fly) {
   const g = gapData?.gaps[i];
   if (!g) return;
   showGapLinks(g);
+  const narrow = innerWidth < 760;
   // 番号・最寄りのバス停・駅がみな入るように寄る
   if (fly) {
     const pts = [[g.lon, g.lat], ...(g.busLL ? [[g.busLL[1], g.busLL[0]]] : []), ...(g.stLL ? [[g.stLL[1], g.stLL[0]]] : [])];
     const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
-    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: { top: 200, bottom: 160, left: 60, right: 60 }, maxZoom: 15, duration: 1200 });
+    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: narrow ? { top: 160, bottom: 220, left: 50, right: 50 } : { top: 200, bottom: 160, left: 60, right: 60 }, maxZoom: 15, duration: 1200 });
   }
   const km2 = g.cells * 0.0625;
-  const html = `<b>${g.rank}. ${esc(gapPlace(g))}付近</b><dl>
-    <dt>徒歩圏の外</dt><dd>いちばん密な 1 km² に${fmtPeople(g.peak ?? g.outside)}（地区全体 約 ${km2.toFixed(1)} km² に${fmtPeople(g.outside)}）</dd>
+  const pt = g.points, ptx = (v) => (pt ? `<i class="pt">${v} 点</i>` : '');
+  const html = `<b>${g.rank}. ${esc(gapPlace(g))}付近${pt ? `　${pt.total} 点` : ''}</b><dl>
+    <dt>圏外の人口</dt><dd>いちばん密な 1 km² に${fmtPeople(g.peak ?? g.outside)}${ptx(pt?.pop)}<br><small>地区全体 約 ${km2.toFixed(1)} km² に${fmtPeople(g.outside)}</small></dd>
+    ${g.peak65 != null ? `<dt>うち 65 歳以上</dt><dd>${fmtPeople(g.peak65)}${ptx(pt?.old)}</dd>` : ''}
+    <dt>遠さ</dt><dd>${g.far != null ? `徒歩圏の ${g.far.toFixed(1)} 倍` : ''}${ptx(pt?.far)}</dd>
     <dt>最寄りのバス停</dt><dd>${g.busM != null ? `${esc(g.busName ?? '')}　約 ${(g.busM / 1000).toFixed(1)} km` : 'なし'}</dd>
     <dt>最寄りの駅</dt><dd>${g.stM != null ? `${esc(g.stName ?? '')}駅${g.stLines.length ? `（${esc(g.stLines.join('・'))}）` : ''}　約 ${(g.stM / 1000).toFixed(1)} km` : 'なし'}</dd></dl>
     <small>距離は、いちばん密な 1 km² の真ん中（番号の位置）から。国土数値情報（2022 年）のバス停・駅で判定した候補です</small>`;
   gapPopup?.remove();
-  gapPopup = new maplibregl.Popup({ className: 'gap-pop', maxWidth: '300px', offset: 14 }).setLngLat([g.lon, g.lat]).setHTML(html).addTo(map);
+  gapPopup = new maplibregl.Popup({ className: 'gap-pop', maxWidth: `${narrow ? Math.min(320, innerWidth - 110) : 320}px`, offset: 14 }).setLngLat([g.lon, g.lat]).setHTML(html).addTo(map);
 }
 map.on('click', 'bt-gaps-dot', (e) => { const r = e.features?.[0]?.properties?.rank; if (r) showGap(r - 1, false); });
 map.on('click', 'bt-gaps-fill', (e) => { const r = e.features?.[0]?.properties?.rank; if (r) showGap(r - 1, false); });
@@ -344,7 +348,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=d340329-2155', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=427af30-2213', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
