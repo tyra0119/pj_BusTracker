@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=db91677-2141';
-import { holidayName } from './holidays.mjs?v=db91677-2141';
-import { Realtime } from './realtime.mjs?v=db91677-2141';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=d340329-2155';
+import { holidayName } from './holidays.mjs?v=d340329-2155';
+import { Realtime } from './realtime.mjs?v=d340329-2155';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -93,7 +93,7 @@ function renderPopLegend() {
   if (popMode === 'gaps') {
     // 順位の一覧（押すとその地区へ）
     $('popLegend').innerHTML = gapData
-      ? `<small>人が多いのに、バス停 300 m・駅 800 m の徒歩圏の外に住む人が多い地区（圏外の人数と、バス停・駅の遠さで順位。全国 ${gapData.candidates.toLocaleString()} 地区の上位 ${gapData.gaps.length}）</small><ol class="gaplist">${gapData.gaps.map((g) => `<li><button type="button" data-gap="${g.rank - 1}"><b>${g.rank}</b><span>${esc(gapPlace(g))}</span><em>${fmtPeople(g.outside)}</em></button></li>`).join('')}</ol><small>国土数値情報（2022 年）のバス停・駅で判定した候補です。その後にできた路線・デマンド交通・送迎バスは含みません</small>`
+      ? `<small>人が多いのに、バス停 300 m・駅 800 m の徒歩圏の外に住む人が多い地区（地区の中でいちばん密な 1 km² の圏外の人数と、そこからバス停・駅までの遠さで順位。全国 ${gapData.candidates.toLocaleString()} 地区の上位 ${gapData.gaps.length}）</small><ol class="gaplist">${gapData.gaps.map((g) => `<li><button type="button" data-gap="${g.rank - 1}"><b>${g.rank}</b><span>${esc(gapPlace(g))}</span><em>${fmtPeople(g.peak ?? g.outside)}/km²</em></button></li>`).join('')}</ol><small>国土数値情報（2022 年）のバス停・駅で判定した候補です。その後にできた路線・デマンド交通・送迎バスは含みません</small>`
       : '<small>読み込んでいます…</small>';
     return;
   }
@@ -122,7 +122,7 @@ function applyPop() {
   if (map.getLayer('bt-pop')) map.removeLayer('bt-pop');
   if (map.getSource('bt-pop')) map.removeSource('bt-pop');
   const m = POP_MODES[popMode];
-  if (!m) return;
+  if (!m) { addGapLayers(); return; } // 「なし」: 空白地帯の枠・番号・線も消す（番号が残っていた。利用者の指摘）
   if (popMode === 'gaps') loadGaps();
   if (popMode === 'walk' && !walkSummary) fetch(`./data/walk/summary.json?v=${buildVer()}`).then((r) => r.json()).then((s) => { walkSummary = s; renderPopLegend(); }).catch(() => {});
   map.addSource('bt-pop', { type: 'raster', tiles: [`btpop://${m.dir}/{z}/{x}/{y}`], tileSize: 256, minzoom: 5, maxzoom: m.max, bounds: [122, 20, 154, 46],
@@ -137,9 +137,10 @@ function loadGaps() {
   fetch(`./data/walk/gaps.json?v=${buildVer()}`).then((r) => r.json()).then((d) => { gapData = d; renderPopLegend(); addGapLayers(); }).catch(() => {});
 }
 function addGapLayers() {
-  for (const id of ['bt-gaps-num', 'bt-gaps-dot', 'bt-gaps-line', 'bt-gaps-fill']) if (map.getLayer(id)) map.removeLayer(id);
-  if (map.getSource('bt-gaps')) map.removeSource('bt-gaps');
-  if (popMode !== 'gaps' || !gapData || !map.getStyle()) return;
+  if (!map.getStyle()) return;
+  for (const id of ['bt-gaplink-label', 'bt-gaplink-end', 'bt-gaplink', 'bt-gaps-num', 'bt-gaps-dot', 'bt-gaps-line', 'bt-gaps-fill']) if (map.getLayer(id)) map.removeLayer(id);
+  for (const id of ['bt-gaps', 'bt-gaplink']) if (map.getSource(id)) map.removeSource(id);
+  if (popMode !== 'gaps' || !gapData) { gapPopup?.remove(); return; }
   const features = [];
   for (const g of gapData.gaps) {
     for (const [s, w, n, e] of g.boxes) features.push({ type: 'Feature', properties: { rank: g.rank }, geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } });
@@ -153,16 +154,43 @@ function addGapLayers() {
   map.addLayer({ id: 'bt-gaps-num', type: 'symbol', source: 'bt-gaps', filter: ['==', ['geometry-type'], 'Point'], layout: { 'text-field': ['get', 'label'], 'text-font': font, 'text-size': ['interpolate', ['linear'], ['zoom'], 5, 11, 10, 13], 'text-allow-overlap': true, 'text-ignore-placement': true }, paint: { 'text-color': '#1a1405' } });
 }
 let gapPopup = null;
+/** 番号の位置から、最寄りのバス停・駅まで線を引き、距離を出す（利用者の提案。2026-10-11） */
+function showGapLinks(g) {
+  if (!map.getStyle()) return;
+  for (const id of ['bt-gaplink-label', 'bt-gaplink-end', 'bt-gaplink']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('bt-gaplink')) map.removeSource('bt-gaplink');
+  const features = [];
+  const km = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 10) * 10} m`);
+  for (const [ll, m, name, kind] of [[g.busLL, g.busM, g.busName, 'bus'], [g.stLL, g.stM, g.stName ? `${g.stName}駅` : null, 'st']]) {
+    if (!ll || m == null) continue;
+    const a = [g.lon, g.lat], b = [ll[1], ll[0]];
+    features.push({ type: 'Feature', properties: { kind }, geometry: { type: 'LineString', coordinates: [a, b] } });
+    features.push({ type: 'Feature', properties: { kind, label: `${kind === 'bus' ? 'バス停' : '駅'}まで ${km(m)}` }, geometry: { type: 'Point', coordinates: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] } });
+    features.push({ type: 'Feature', properties: { kind, end: 1, label: name ?? '' }, geometry: { type: 'Point', coordinates: b } });
+  }
+  map.addSource('bt-gaplink', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+  const font = map.getStyle().layers.find((l) => l.type === 'symbol' && l.layout?.['text-font'])?.layout['text-font'] ?? ['Open Sans Regular'];
+  const col = ['case', ['==', ['get', 'kind'], 'bus'], '#ffc400', '#78ffa0'];
+  map.addLayer({ id: 'bt-gaplink', type: 'line', source: 'bt-gaplink', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'round' }, paint: { 'line-color': col, 'line-width': 2.5, 'line-dasharray': [2, 1.5] } });
+  map.addLayer({ id: 'bt-gaplink-end', type: 'circle', source: 'bt-gaplink', filter: ['==', ['get', 'end'], 1], paint: { 'circle-radius': 6, 'circle-color': col, 'circle-stroke-color': '#0b0f14', 'circle-stroke-width': 2 } });
+  map.addLayer({ id: 'bt-gaplink-label', type: 'symbol', source: 'bt-gaplink', filter: ['==', ['geometry-type'], 'Point'], layout: { 'text-field': ['get', 'label'], 'text-font': font, 'text-size': 13, 'text-offset': ['case', ['==', ['get', 'end'], 1], ['literal', [0, 1.2]], ['literal', [0, 0]]], 'text-allow-overlap': true }, paint: { 'text-color': col, 'text-halo-color': 'rgba(8, 12, 16, 0.95)', 'text-halo-width': 2 } });
+}
 function showGap(i, fly) {
   const g = gapData?.gaps[i];
   if (!g) return;
-  if (fly) map.flyTo({ center: [g.lon, g.lat], zoom: Math.max(map.getZoom(), 13), duration: 1200 });
+  showGapLinks(g);
+  // 番号・最寄りのバス停・駅がみな入るように寄る
+  if (fly) {
+    const pts = [[g.lon, g.lat], ...(g.busLL ? [[g.busLL[1], g.busLL[0]]] : []), ...(g.stLL ? [[g.stLL[1], g.stLL[0]]] : [])];
+    const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
+    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: { top: 200, bottom: 160, left: 60, right: 60 }, maxZoom: 15, duration: 1200 });
+  }
   const km2 = g.cells * 0.0625;
   const html = `<b>${g.rank}. ${esc(gapPlace(g))}付近</b><dl>
-    <dt>徒歩圏の外</dt><dd>${fmtPeople(g.outside)}（約 ${km2.toFixed(1)} km²）</dd>
+    <dt>徒歩圏の外</dt><dd>いちばん密な 1 km² に${fmtPeople(g.peak ?? g.outside)}（地区全体 約 ${km2.toFixed(1)} km² に${fmtPeople(g.outside)}）</dd>
     <dt>最寄りのバス停</dt><dd>${g.busM != null ? `${esc(g.busName ?? '')}　約 ${(g.busM / 1000).toFixed(1)} km` : 'なし'}</dd>
     <dt>最寄りの駅</dt><dd>${g.stM != null ? `${esc(g.stName ?? '')}駅${g.stLines.length ? `（${esc(g.stLines.join('・'))}）` : ''}　約 ${(g.stM / 1000).toFixed(1)} km` : 'なし'}</dd></dl>
-    <small>距離は地区の真ん中から。国土数値情報（2022 年）のバス停・駅で判定した候補です</small>`;
+    <small>距離は、いちばん密な 1 km² の真ん中（番号の位置）から。国土数値情報（2022 年）のバス停・駅で判定した候補です</small>`;
   gapPopup?.remove();
   gapPopup = new maplibregl.Popup({ className: 'gap-pop', maxWidth: '300px', offset: 14 }).setLngLat([g.lon, g.lat]).setHTML(html).addTo(map);
 }
@@ -316,7 +344,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=db91677-2141', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=d340329-2155', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
