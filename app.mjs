@@ -1,7 +1,7 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=3a03572-1806';
-import { holidayName } from './holidays.mjs?v=3a03572-1806';
-import { Realtime } from './realtime.mjs?v=3a03572-1806';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=7aab57b-2136';
+import { holidayName } from './holidays.mjs?v=7aab57b-2136';
+import { Realtime } from './realtime.mjs?v=7aab57b-2136';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -76,15 +76,27 @@ map.on('style.load', applyOverlay);
 const POP_MODES = {
   pop: { dir: 'pop', max: 10, steps: [[1, [70, 50, 130, 70]], [10, [95, 62, 160, 95]], [50, [125, 75, 190, 120]], [200, [160, 85, 205, 140]], [1000, [195, 95, 200, 155]], [3000, [225, 110, 185, 170]], [8000, [245, 140, 200, 185]]], note: '1 km² あたりの人数（令和 2 年国勢調査）' },
   walk: { dir: 'walk', max: 11, steps: [[1, [130, 40, 40, 80]], [20, [170, 45, 40, 110]], [100, [205, 60, 45, 140]], [500, [235, 85, 55, 165]], [2000, [255, 130, 80, 190]]], note: 'バス停から 300 m・駅から 800 m の外に住む人（1 km² あたり。令和 2 年国勢調査・約 250 m 四方）' },
+  // 空白地帯の候補（2026-10-11。利用者の提案）: 徒歩圏の外の人口に、人が多くて遠い地区の上位 30 を黄色の枠と番号で（build-coverage.mjs の gaps.json）
+  gaps: { dir: 'walk', max: 11, steps: [[1, [130, 40, 40, 60]], [20, [170, 45, 40, 80]], [100, [205, 60, 45, 100]], [500, [235, 85, 55, 120]], [2000, [255, 130, 80, 140]]], note: '' },
 };
 let popMode = '', popOp = 60;
 try { const v = localStorage.getItem('bt.pop'); popMode = v === '1' ? 'pop' : POP_MODES[v] ? v : ''; popOp = +(localStorage.getItem('bt.popOp') || 60); } catch { /* 使えなくてもよい */ }
 $('popMode').value = popMode; $('popOp').value = String(popOp); $('popWrap').hidden = !popMode;
 const buildVer = () => document.querySelector('meta[name="build"]')?.content ?? '';
 let walkSummary = null;
+let gapData = null;
+const fmtPeople = (n) => (n >= 10000 ? `約 ${(n / 10000).toFixed(1)} 万人` : `約 ${Math.round(n / 100) * 100} 人`);
+const gapPlace = (g) => (g.place || '（名前なし）').replace(/\s+/g, '');
 function renderPopLegend() {
   const m = POP_MODES[popMode];
   if (!m) return;
+  if (popMode === 'gaps') {
+    // 順位の一覧（押すとその地区へ）
+    $('popLegend').innerHTML = gapData
+      ? `<small>人が多いのに、バス停 300 m・駅 800 m の徒歩圏の外に住む人が多い地区（圏外の人数と、バス停・駅の遠さで順位。全国 ${gapData.candidates.toLocaleString()} 地区の上位 ${gapData.gaps.length}）</small><ol class="gaplist">${gapData.gaps.map((g) => `<li><button type="button" data-gap="${g.rank - 1}"><b>${g.rank}</b><span>${esc(gapPlace(g))}</span><em>${fmtPeople(g.outside)}</em></button></li>`).join('')}</ol><small>国土数値情報（2022 年）のバス停・駅で判定した候補です。その後にできた路線・デマンド交通・送迎バスは含みません</small>`
+      : '<small>読み込んでいます…</small>';
+    return;
+  }
   let h = m.steps.map(([lo, c], i) => `<span><i style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, c[3] / 255 + 0.15).toFixed(2)})"></i>${lo.toLocaleString()}${i + 1 < m.steps.length ? `〜${(m.steps[i + 1][0] - 1).toLocaleString()}` : ' 以上'}</span>`).join('') + `<small>${m.note}</small>`;
   if (popMode === 'walk' && walkSummary) {
     const s = walkSummary, top = [...s.prefs].sort((a, b) => b.pct - a.pct).slice(0, 3);
@@ -111,12 +123,52 @@ function applyPop() {
   if (map.getSource('bt-pop')) map.removeSource('bt-pop');
   const m = POP_MODES[popMode];
   if (!m) return;
+  if (popMode === 'gaps') loadGaps();
   if (popMode === 'walk' && !walkSummary) fetch(`./data/walk/summary.json?v=${buildVer()}`).then((r) => r.json()).then((s) => { walkSummary = s; renderPopLegend(); }).catch(() => {});
   map.addSource('bt-pop', { type: 'raster', tiles: [`btpop://${m.dir}/{z}/{x}/{y}`], tileSize: 256, minzoom: 5, maxzoom: m.max, bounds: [122, 20, 154, 46],
-    attribution: popMode === 'walk' ? '徒歩圏の外の人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）・国土数値情報（バス停・駅）から作成' : '人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）' });
+    attribution: popMode === 'walk' || popMode === 'gaps' ? '徒歩圏の外の人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）・国土数値情報（バス停・駅）から作成' : '人口: <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">e-Stat</a>（令和 2 年国勢調査）' });
   const below = map.getLayer('bt-buslines') ? 'bt-buslines' : map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
   map.addLayer({ id: 'bt-pop', type: 'raster', source: 'bt-pop', paint: { 'raster-opacity': popOp / 100, 'raster-resampling': 'nearest', 'raster-fade-duration': 0 } }, below);
+  addGapLayers();
 }
+// 空白地帯の候補: 地区のマスを黄色で囲み、真ん中に順位。押すと詳しく（地図の上の吹き出し）
+function loadGaps() {
+  if (gapData) { renderPopLegend(); addGapLayers(); return; }
+  fetch(`./data/walk/gaps.json?v=${buildVer()}`).then((r) => r.json()).then((d) => { gapData = d; renderPopLegend(); addGapLayers(); }).catch(() => {});
+}
+function addGapLayers() {
+  for (const id of ['bt-gaps-num', 'bt-gaps-dot', 'bt-gaps-line', 'bt-gaps-fill']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('bt-gaps')) map.removeSource('bt-gaps');
+  if (popMode !== 'gaps' || !gapData || !map.getStyle()) return;
+  const features = [];
+  for (const g of gapData.gaps) {
+    for (const [s, w, n, e] of g.boxes) features.push({ type: 'Feature', properties: { rank: g.rank }, geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } });
+    features.push({ type: 'Feature', properties: { rank: g.rank, label: String(g.rank) }, geometry: { type: 'Point', coordinates: [g.lon, g.lat] } });
+  }
+  map.addSource('bt-gaps', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+  const font = map.getStyle().layers.find((l) => l.type === 'symbol' && l.layout?.['text-font'])?.layout['text-font'] ?? ['Open Sans Regular'];
+  map.addLayer({ id: 'bt-gaps-fill', type: 'fill', source: 'bt-gaps', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': '#ffd23c', 'fill-opacity': 0.16, 'fill-outline-color': 'rgba(255, 210, 60, 0)' } });
+  map.addLayer({ id: 'bt-gaps-line', type: 'line', source: 'bt-gaps', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'line-color': '#ffd23c', 'line-opacity': 0.55, 'line-width': 0.8 } });
+  map.addLayer({ id: 'bt-gaps-dot', type: 'circle', source: 'bt-gaps', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 9, 10, 12], 'circle-color': '#ffd23c', 'circle-stroke-color': '#1a1405', 'circle-stroke-width': 1.5 } });
+  map.addLayer({ id: 'bt-gaps-num', type: 'symbol', source: 'bt-gaps', filter: ['==', ['geometry-type'], 'Point'], layout: { 'text-field': ['get', 'label'], 'text-font': font, 'text-size': ['interpolate', ['linear'], ['zoom'], 5, 11, 10, 13], 'text-allow-overlap': true, 'text-ignore-placement': true }, paint: { 'text-color': '#1a1405' } });
+}
+let gapPopup = null;
+function showGap(i, fly) {
+  const g = gapData?.gaps[i];
+  if (!g) return;
+  if (fly) map.flyTo({ center: [g.lon, g.lat], zoom: Math.max(map.getZoom(), 13), duration: 1200 });
+  const km2 = g.cells * 0.0625;
+  const html = `<b>${g.rank}. ${esc(gapPlace(g))}付近</b><dl>
+    <dt>徒歩圏の外</dt><dd>${fmtPeople(g.outside)}（約 ${km2.toFixed(1)} km²）</dd>
+    <dt>最寄りのバス停</dt><dd>${g.busM != null ? `${esc(g.busName ?? '')}　約 ${(g.busM / 1000).toFixed(1)} km` : 'なし'}</dd>
+    <dt>最寄りの駅</dt><dd>${g.stM != null ? `${esc(g.stName ?? '')}駅${g.stLines.length ? `（${esc(g.stLines.join('・'))}）` : ''}　約 ${(g.stM / 1000).toFixed(1)} km` : 'なし'}</dd></dl>
+    <small>距離は地区の真ん中から。国土数値情報（2022 年）のバス停・駅で判定した候補です</small>`;
+  gapPopup?.remove();
+  gapPopup = new maplibregl.Popup({ className: 'gap-pop', maxWidth: '300px', offset: 14 }).setLngLat([g.lon, g.lat]).setHTML(html).addTo(map);
+}
+map.on('click', 'bt-gaps-dot', (e) => { const r = e.features?.[0]?.properties?.rank; if (r) showGap(r - 1, false); });
+map.on('click', 'bt-gaps-fill', (e) => { const r = e.features?.[0]?.properties?.rank; if (r) showGap(r - 1, false); });
+$('popLegend').addEventListener('click', (e) => { const b = e.target.closest('[data-gap]'); if (b) showGap(+b.dataset.gap, true); });
 map.on('style.load', applyPop);
 // 3D の建物（利用者の指定。2026-10-05）: 背景の地図（CARTO）の建物（render_height・render_min_height）を立ち上げる。
 // 縮尺 14 以上だけ描く（広域では建物の層が無く、重さに影響しない）。オンにすると地図を傾け、オフで真上に戻す
@@ -156,6 +208,7 @@ $('overlayMap').onchange = (e) => {
 };
 $('popMode').onchange = (e) => {
   popMode = e.target.value;
+  if (popMode !== 'gaps') gapPopup?.remove();
   $('popWrap').hidden = !popMode;
   try { localStorage.setItem('bt.pop', popMode); } catch { /* 使えなくてもよい */ }
   renderPopLegend();
@@ -263,7 +316,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=3a03572-1806', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=7aab57b-2136', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);

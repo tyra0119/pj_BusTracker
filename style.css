@@ -216,3 +216,16 @@ dialog .close { position: absolute; }
 .poplegend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .poplegend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .poplegend small { flex-basis: 100%; font-size: 10.5px; }
+/* 空白地帯の候補: 順位の一覧と、地図の上の吹き出し */
+.gaplist { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 2px; flex-basis: 100%; max-height: 260px; overflow-y: auto; }
+.gaplist button { width: 100%; display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; align-items: center; text-align: left; font-size: 12px; padding: 4px 6px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: inherit; cursor: pointer; }
+.gaplist button:hover { border-color: var(--line); background: rgba(255, 210, 60, 0.08); }
+.gaplist b { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #ffd23c; color: #1a1405; font-size: 11px; }
+.gaplist span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gaplist em { font-style: normal; color: var(--muted); font-size: 11px; }
+.gap-pop .maplibregl-popup-content { background: var(--panel-solid); color: var(--fg, #e8edf2); border: 1px solid rgba(255, 210, 60, 0.6); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; }
+.gap-pop .maplibregl-popup-tip { border-top-color: var(--panel-solid); border-bottom-color: var(--panel-solid); }
+.gap-pop dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 6px 0; }
+.gap-pop dt { color: var(--muted); }
+.gap-pop dd { margin: 0; }
+.gap-pop small { color: var(--muted); font-size: 11px; }
