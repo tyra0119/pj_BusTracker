@@ -49,11 +49,18 @@ function getFlatTile() {
   return flatTile;
 }
 
-maplibregl.addProtocol('btdem', async (params, abort) => {
-  const url = params.url.replace('btdem://', 'https://');
+// 変換したタイル。地形用と陰影用の 2 つの source が同じタイルを読むので、取得と変換は 1 回にして使い回す（2026-10-12。
+// 前は 2 回ずつ取って変換していて、山の多い所では読み終わるまで 10 秒以上かかり、その間は 0 m の平らな所が崖のように見えた）
+const done = new Map();    // url → 変換した PNG（ArrayBuffer）。古いものから捨てる
+const pending = new Map(); // url → { promise, ctrl, refs }（読み込み中。待っている source がみな取りやめたら取得もやめる）
+
+async function loadTile(url, signal) {
   const m = /\/(\d+)\/(\d+)\/(\d+)\.png/.exec(url);
-  const res = await fetch(url, { signal: abort.signal });
-  if (!res.ok) return { data: await getFlatTile() }; // 海の上などはタイルが無い（404）
+  const res = await fetch(url, { signal });
+  // 0 m の平らなタイルにするのは「タイルが無い」（海の上など、404）ときだけ。サーバーの一時的な失敗（5xx・429）や通信の失敗は
+  // 失敗のまま返す（0 m で埋めると、その場所が開き直すまで崖のまま残る。失敗なら MapLibre が次に見たとき取り直す）
+  if (res.status === 404) return getFlatTile();
+  if (!res.ok) throw new Error(`標高タイル ${res.status} ${url}`);
   const bmp = await createImageBitmap(await res.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const canvas = makeCanvas();
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -77,7 +84,33 @@ maplibregl.addProtocol('btdem', async (params, abort) => {
     version++;
     if (!notifyTimer) notifyTimer = setTimeout(() => { notifyTimer = 0; for (const fn of listeners) fn(); }, 400);
   }
-  return { data: await canvasToPng(canvas) };
+  return canvasToPng(canvas);
+}
+
+maplibregl.addProtocol('btdem', async (params, abort) => {
+  const url = params.url.replace('btdem://', 'https://');
+  // MapLibre は受け取った ArrayBuffer を処理用のスレッドへ渡して使えなくするので、写しを返す
+  if (done.has(url)) { const buf = done.get(url); done.delete(url); done.set(url, buf); return { data: buf.slice(0) }; }
+  let e = pending.get(url);
+  if (!e) {
+    const ctrl = new AbortController();
+    e = { ctrl, refs: 0, promise: null };
+    e.promise = loadTile(url, ctrl.signal).then((buf) => {
+      done.set(url, buf);
+      if (done.size > MAX_TILES) done.delete(done.keys().next().value);
+      return buf;
+    }).finally(() => { if (pending.get(url) === e) pending.delete(url); });
+    pending.set(url, e);
+  }
+  e.refs++;
+  // みな取りやめたら取得もやめる。すぐ一覧から外すので、そのあと同じタイルを頼まれたら取り直す
+  const onAbort = () => { if (--e.refs <= 0) { if (pending.get(url) === e) pending.delete(url); e.ctrl.abort(); } };
+  abort.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    return { data: (await e.promise).slice(0) };
+  } finally {
+    abort.signal.removeEventListener('abort', onAbort);
+  }
 });
 
 /** 地形の元（MapLibre の source）。地形用と陰影用は別にする（同じだと MapLibre が警告し、陰影が粗くなる） */
