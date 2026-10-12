@@ -1,7 +1,8 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=71f7e12-1020';
-import { holidayName } from './holidays.mjs?v=71f7e12-1020';
-import { Realtime } from './realtime.mjs?v=71f7e12-1020';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=7681f0f-1816';
+import { holidayName } from './holidays.mjs?v=7681f0f-1816';
+import { Realtime } from './realtime.mjs?v=7681f0f-1816';
+import { demSource, elevAt, withHeights, exaggerationFor, zScale, setViewZoom, onElevationChange } from './terrain.mjs?v=7681f0f-1816';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -232,6 +233,62 @@ $('bldg3d').onchange = (e) => {
   applyBuildings();
   map.easeTo({ pitch: bldg3d ? 55 : 0, duration: 800 });
 };
+// 地形の立体（利用者の指定。2026-10-12）: 国土地理院の標高（web/terrain.mjs）で山を立ち上げる。地図（MapLibre）の線・建物は
+// 地形に乗るが、バス・軌跡・停留所（deck.gl）は高さを知らないので、同じ標高を点に持たせる（hz・withHeights）。
+// 強調の倍率は縮尺で変える（引くほど強く）。点の高さは強調する前の m で持ち、倍率は層の modelMatrix で掛ける
+let terrain3d = false;
+try { terrain3d = localStorage.getItem('bt.terrain') === '1'; } catch { /* 使えなくてもよい */ }
+$('terrain3d').checked = terrain3d;
+let exag = 1;      // いまの強調の倍率
+let elevKey = 0;   // 標高のタイルが増えたら変わる（点の高さを引き直す合図）
+let elevDirtyAt = 0;
+const hz = (lon, lat) => (terrain3d ? elevAt(lon, lat) : 0);
+const P = (lon, lat) => [lon, lat, hz(lon, lat)];
+onElevationChange(() => { if (!terrain3d) return; elevKey++; elevDirtyAt = performance.now(); });
+function applyTerrain() {
+  if (!map.getStyle()) return;
+  if (!terrain3d) {
+    if (map.getTerrain()) map.setTerrain(null);
+    if (map.getLayer('bt-hillshade')) map.removeLayer('bt-hillshade');
+    for (const id of ['bt-dem', 'bt-dem-shade']) if (map.getSource(id)) map.removeSource(id);
+    return;
+  }
+  if (!map.getSource('bt-dem')) map.addSource('bt-dem', demSource());
+  if (!map.getSource('bt-dem-shade')) map.addSource('bt-dem-shade', demSource());
+  if (!map.getLayer('bt-hillshade')) {
+    const dark = theme === 'dark';
+    // 道路・線路・地名より下（陸と水の色の上）に陰影を置く
+    const before = map.getStyle().layers.find((l) => l.type === 'line' || l.type === 'symbol')?.id;
+    map.addLayer({
+      id: 'bt-hillshade', type: 'hillshade', source: 'bt-dem-shade',
+      paint: {
+        'hillshade-exaggeration': dark ? 0.55 : 0.4,
+        'hillshade-shadow-color': dark ? '#000000' : '#5b6670',
+        'hillshade-highlight-color': dark ? '#6f8096' : '#ffffff',
+        'hillshade-accent-color': dark ? '#000000' : '#5b6670',
+        'hillshade-illumination-anchor': 'map',
+      },
+    }, before);
+  }
+  exag = exaggerationFor(map.getZoom());
+  map.setTerrain({ source: 'bt-dem', exaggeration: exag });
+}
+map.on('style.load', applyTerrain);
+map.on('zoom', () => {
+  if (!terrain3d || !map.terrain) return;
+  exag = exaggerationFor(map.getZoom());
+  map.terrain.exaggeration = exag;
+});
+if (terrain3d) map.once('load', () => { if (map.getPitch() < 1) map.easeTo({ pitch: 55, duration: 0 }); });
+$('terrain3d').onchange = (e) => {
+  terrain3d = e.target.checked;
+  try { localStorage.setItem('bt.terrain', terrain3d ? '1' : '0'); } catch { /* 使えなくてもよい */ }
+  applyTerrain();
+  elevKey++;
+  trails.dirty = true;
+  if (terrain3d && map.getPitch() < 1) map.easeTo({ pitch: 55, duration: 800 });
+  else if (!terrain3d && !bldg3d) map.easeTo({ pitch: 0, duration: 800 });
+};
 $('overlayMap').onchange = (e) => {
   overlayMap = e.target.value;
   $('overlayOpWrap').hidden = !overlayMap;
@@ -348,7 +405,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=71f7e12-1020', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=7681f0f-1816', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -480,7 +537,7 @@ function setDay(day) {
 
 // ---------- 走っているバス ----------
 let runBuf = new Int32Array(1 << 16);
-let posBuf = new Float64Array(2 << 16);
+let posBuf = new Float64Array(3 << 16); // lon, lat, 高さ（地形を立体にしたとき。強調する前の m）
 let colBuf = new Uint8Array(4 << 16);
 let radBuf = new Float32Array(1 << 16);
 let runIdx = new Int32Array(1 << 16); // 描いた点 → 便
@@ -490,9 +547,10 @@ const nModeAll = [0, 0, 0, 0]; // 読み込んだ全データの中
 let nView = 0;
 const tmp = [0, 0, 0];
 function updateHeads() {
-  if (runBuf.length < schedule.n) { const cap = 1 << Math.ceil(Math.log2(schedule.n + 1)); runBuf = new Int32Array(cap); runIdx = new Int32Array(cap); posBuf = new Float64Array(cap * 2); colBuf = new Uint8Array(cap * 4); radBuf = new Float32Array(cap); }
+  if (runBuf.length < schedule.n) { const cap = 1 << Math.ceil(Math.log2(schedule.n + 1)); runBuf = new Int32Array(cap); runIdx = new Int32Array(cap); posBuf = new Float64Array(cap * 3); colBuf = new Uint8Array(cap * 4); radBuf = new Float32Array(cap); }
   const m = schedule.running(clock.t, runBuf);
   const z = map.getZoom();
+  setViewZoom(z);
   const r = z < 6 ? 1.6 : z < 8 ? 2.2 : z < 11 ? 3 : z < 14 ? 4.5 : 6;
   let q = 0;
   nMode.fill(0); nModeAll.fill(0); nView = 0;
@@ -511,7 +569,7 @@ function updateHeads() {
     if (!kindOk(rt)) continue;
     if (inView) nView++;
     runIdx[q] = j;
-    posBuf[q * 2] = tmp[0]; posBuf[q * 2 + 1] = tmp[1];
+    posBuf[q * 3] = tmp[0]; posBuf[q * 3 + 1] = tmp[1]; posBuf[q * 3 + 2] = hz(tmp[0], tmp[1]);
     const c = rt.rgb;
     const on = !sel || (sel.f === fi && sel.r === pat.r);
     colBuf[q * 4] = c[0]; colBuf[q * 4 + 1] = c[1]; colBuf[q * 4 + 2] = c[2]; colBuf[q * 4 + 3] = on ? 255 : 40;
@@ -558,13 +616,15 @@ function buildTrails() {
     const p = schedule.trailPath(j, Math.max(schedule.ts[j], w0 - L), Math.min(schedule.te[j], w1), base, false, gap);
     if (!p) continue;
     const feed = feeds[fi], pat = feed.pats[feed.trips[schedule.ti[j] * 4]];
-    data.push({ path: p.path, ts: p.ts, c: feed.routes[pat.r].rgb, f: fi, r: pat.r, m: feed.routes[pat.r].mode });
+    data.push({ path: terrain3d ? withHeights(p.path) : p.path, ts: p.ts, c: feed.routes[pat.r].rgb, f: fi, r: pat.r, m: feed.routes[pat.r].mode });
   }
   perf.log.push(['trails', Math.round(performance.now() - _t0)]);
-  Object.assign(trails, { data, w0, w1, base, L, zoomKey: mode + gap + (MOBILE ? '' : Math.round(map.getZoom())), bounds, version: (trails.version ?? 0) + 1 });
+  Object.assign(trails, { data, w0, w1, base, L, zoomKey: mode + gap + (MOBILE ? '' : Math.round(map.getZoom())), bounds, xyz: terrain3d, elevBuiltAt: performance.now(), version: (trails.version ?? 0) + 1 });
 }
 function ensureTrails() {
   const t = clock.t;
+  // 地形を立体にしているときは、標高のタイルが増えたら軌跡の高さを引き直す（読み込み中に作り直しが続かないよう 1.5 秒あける）
+  if (terrain3d && elevDirtyAt > (trails.elevBuiltAt ?? 0) && performance.now() - (trails.elevBuiltAt ?? 0) > 1500) trails.dirty = true;
   if (trails.dirty || t < trails.w0 - 1 || t > trails.w1) buildTrails();
 }
 map.on('moveend', () => {
@@ -1409,8 +1469,9 @@ function layers() {
   syncMapLines(dim);
   syncMapLabels(z);
   if (selGeom) {
-    out.push(new PathLayer({ id: 'selHalo', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [255, 255, 255, 200], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
-    out.push(new PathLayer({ id: 'selLine', data: selGeom.lines, getPath: (d) => d.path, positionFormat: 'XY', getColor: [...selGeom.c, 255], getWidth: 3.5, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
+    const selPath = terrain3d ? (d) => withHeights(d.path) : (d) => d.path, selFmt = terrain3d ? 'XYZ' : 'XY', selTrig = { getPath: [terrain3d, elevKey] };
+    out.push(new PathLayer({ id: 'selHalo', data: selGeom.lines, getPath: selPath, positionFormat: selFmt, updateTriggers: selTrig, getColor: [255, 255, 255, 200], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
+    out.push(new PathLayer({ id: 'selLine', data: selGeom.lines, getPath: selPath, positionFormat: selFmt, updateTriggers: selTrig, getColor: [...selGeom.c, 255], getWidth: 3.5, widthUnits: 'pixels', capRounded: true, jointRounded: true }));
   }
   if (trailLen && trails.data.length) {
     // 軌跡 = 動いた跡が徐々に消えていく残像。長さの違う細い尾を 3 本重ねる（長く淡い・中くらい・短く明るい）。
@@ -1437,7 +1498,7 @@ function layers() {
         visible: !(zooming && tr.k < 1),
         data: trails.data,
         getPath: (d) => d.path,
-        positionFormat: 'XY',
+        positionFormat: trails.xyz ? 'XYZ' : 'XY',
         getTimestamps: (d) => d.ts,
         getColor: (d) => (off(d) ? [...d.c, tr.k === 1 ? 40 : 0] : dark ? bright(d.c) : d.c),
         getWidth: (d) => (d.m === 1 ? 1.5 : d.m === 2 ? 1.35 : 1) * tr.wd,
@@ -1460,7 +1521,7 @@ function layers() {
     out.push(new PolygonLayer({
       id: 'areas',
       data: areaData,
-      getPolygon: (d) => d.poly,
+      getPolygon: terrain3d ? (d) => d.poly.map(([x, y]) => P(x, y)) : (d) => d.poly,
       getFillColor: (d) => (d.on ? [255, 140, 70, 22 + 30 * pulse] : [160, 160, 170, 14]),
       getLineColor: (d) => (d.on ? [255, 160, 90, 230] : [160, 160, 170, 90]),
       lineWidthUnits: 'pixels',
@@ -1469,13 +1530,13 @@ function layers() {
       pickable: true,
       autoHighlight: true,
       highlightColor: [255, 255, 255, 60],
-      updateTriggers: { getFillColor: [pulse.toFixed(2), activeAreas.length], getLineColor: [activeAreas.length], getLineWidth: [activeAreas.length] },
+      updateTriggers: { getPolygon: [terrain3d, elevKey], getFillColor: [pulse.toFixed(2), activeAreas.length], getLineColor: [activeAreas.length], getLineWidth: [activeAreas.length] },
     }));
   }
   if (lineOn.stops && stationView.length && z >= 10) {
     // 全国の駅（時刻表の無い路線の駅も）。白い縁の四角っぽい点で、バス停より目立たせる
     out.push(new ScatterplotLayer({
-      id: 'stations', data: stationView, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: z >= 14 ? 5.5 : z >= 12 ? 4.2 : 3,
+      id: 'stations', data: stationView, getPosition: (d) => P(d.p[0], d.p[1]), updateTriggers: { getPosition: [terrain3d, elevKey] }, radiusUnits: 'pixels', getRadius: z >= 14 ? 5.5 : z >= 12 ? 4.2 : 3,
       getFillColor: dark ? [235, 240, 245, 230] : [40, 50, 60, 230], stroked: true, getLineColor: dark ? [20, 26, 34, 255] : [255, 255, 255, 255],
       lineWidthUnits: 'pixels', getLineWidth: 1.5, pickable: true, autoHighlight: true, highlightColor: [255, 196, 0, 255],
     }));
@@ -1483,25 +1544,25 @@ function layers() {
   if (lineOn.stops && p11Pts.length && z >= 13) {
     // 全国のバス停（時刻表のデータが無いものも）。小さく淡く
     out.push(new ScatterplotLayer({
-      id: 'p11', data: p11Pts, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 2.2,
+      id: 'p11', data: p11Pts, getPosition: (d) => P(d.p[0], d.p[1]), updateTriggers: { getPosition: [terrain3d, elevKey] }, radiusUnits: 'pixels', getRadius: 2.2,
       getFillColor: dark ? [120, 130, 140, 110] : [130, 140, 150, 140], stroked: false, pickable: true,
     }));
   }
   if (lineOn.stops && stopPts.length && z >= 13) {
     out.push(new ScatterplotLayer({
-      id: 'stops', data: stopPts, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 3.2,
+      id: 'stops', data: stopPts, getPosition: (d) => P(d.p[0], d.p[1]), updateTriggers: { getPosition: [terrain3d, elevKey] }, radiusUnits: 'pixels', getRadius: 3.2,
       getFillColor: theme === 'dark' ? [20, 26, 34] : [255, 255, 255], stroked: true, getLineColor: theme === 'dark' ? [200, 210, 220] : [60, 70, 80], lineWidthUnits: 'pixels', getLineWidth: 1.2, pickable: true,
     }));
   }
   if (selGeom) {
     out.push(new ScatterplotLayer({
-      id: 'selStops', data: selGeom.stops, getPosition: (d) => d.p, radiusUnits: 'pixels', getRadius: 4.5,
+      id: 'selStops', data: selGeom.stops, getPosition: (d) => P(d.p[0], d.p[1]), updateTriggers: { getPosition: [terrain3d, elevKey] }, radiusUnits: 'pixels', getRadius: 4.5,
       getFillColor: [255, 255, 255], stroked: true, getLineColor: [...selGeom.c, 255], lineWidthUnits: 'pixels', getLineWidth: 2, pickable: true,
     }));
   }
   // ids: 何番目の点がどの便か（この層が描いたときの写し）。押したときはこれで引く。runIdx は毎フレーム作り直すので、
   // 描画が 1 フレーム遅れて押した位置を調べると番号がずれ、全国の別の便（札幌で押して釧路のバス）を選んでいた（2026-10-05）
-  const busData = { length: nRun, ids: runIdx.slice(0, nRun), attributes: { getPosition: { value: posBuf.subarray(0, nRun * 2), size: 2 }, getFillColor: { value: colBuf.subarray(0, nRun * 4), size: 4 }, getRadius: { value: radBuf.subarray(0, nRun), size: 1 } } };
+  const busData = { length: nRun, ids: runIdx.slice(0, nRun), attributes: { getPosition: { value: posBuf.subarray(0, nRun * 3), size: 3 }, getFillColor: { value: colBuf.subarray(0, nRun * 4), size: 4 }, getRadius: { value: radBuf.subarray(0, nRun), size: 1 } } };
   if (theme === 'dark' && z >= 12 && !MOBILE) {
     out.push(new ScatterplotLayer({
       id: 'busGlow', data: busData, radiusUnits: 'pixels', radiusScale: 2.1, opacity: 0.16,
@@ -1521,19 +1582,19 @@ function layers() {
   if (rtOn && clock.live && rtData.length) {
     // 時刻表の位置 → 実際の位置 を細い線で結ぶ（ずれが見える）
     out.push(new LineLayer({
-      id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => d.sp, getTargetPosition: (d) => [d.lon, d.lat],
+      id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => P(d.sp[0], d.sp[1]), getTargetPosition: (d) => P(d.lon, d.lat),
       getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
     }));
     // 配信中の本物の位置であることを示す、ゆっくり明滅する輪
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 500);
     out.push(new ScatterplotLayer({
-      id: 'rtPulse', data: rtData, getPosition: (d) => [d.lon, d.lat], radiusUnits: 'pixels', getRadius: (z < 9 ? 9 : z < 13 ? 12 : 15) * (0.9 + 0.25 * pulse),
+      id: 'rtPulse', data: rtData, getPosition: (d) => P(d.lon, d.lat), radiusUnits: 'pixels', getRadius: (z < 9 ? 9 : z < 13 ? 12 : 15) * (0.9 + 0.25 * pulse),
       filled: false, stroked: true, getLineColor: (d) => [...delayColor(d.delay), Math.round(60 + 120 * pulse)], lineWidthUnits: 'pixels', getLineWidth: 1.5,
       updateTriggers: { getLineColor: [pulse.toFixed(2), rtTick] },
     }));
     // 電車は角の丸い四角、バスはひし形。白い縁（下の層）＋遅れの色（上の層）
     const sz = z < 9 ? 9 : z < 13 ? 12 : 15;
-    const common = { data: rtData, iconAtlas: RT_ICONS.url, iconMapping: RT_ICONS.mapping, getIcon: (d) => (d.rail ? 'train' : 'bus'), getPosition: (d) => [d.lon, d.lat], sizeUnits: 'pixels', billboard: false };
+    const common = { data: rtData, iconAtlas: RT_ICONS.url, iconMapping: RT_ICONS.mapping, getIcon: (d) => (d.rail ? 'train' : 'bus'), getPosition: (d) => P(d.lon, d.lat), sizeUnits: 'pixels', billboard: false };
     out.push(new IconLayer({ ...common, id: 'rtEdge', getSize: (d) => (d.rail ? sz * 0.95 : sz * 1.2) + 4, getColor: dark ? [255, 255, 255, 255] : [20, 20, 20, 255], updateTriggers: { getSize: [sz] } }));
     out.push(new IconLayer({
       ...common, id: 'rt', getSize: (d) => (d.rail ? sz * 0.95 : sz * 1.2), getColor: (d) => [...delayColor(d.delay), 255], pickable: true,
@@ -1541,7 +1602,7 @@ function layers() {
     }));
     if (rtFollow) {
       const d = rtData.find((x) => x.key === rtFollow);
-      if (d) out.push(new ScatterplotLayer({ id: 'rtFollowRing', data: [d], getPosition: (x) => [x.lon, x.lat], radiusUnits: 'pixels', getRadius: sz * 1.4, filled: false, stroked: true, getLineColor: [255, 196, 0, 255], lineWidthUnits: 'pixels', getLineWidth: 2.5 }));
+      if (d) out.push(new ScatterplotLayer({ id: 'rtFollowRing', data: [d], getPosition: (x) => P(x.lon, x.lat), radiusUnits: 'pixels', getRadius: sz * 1.4, filled: false, stroked: true, getLineColor: [255, 196, 0, 255], lineWidthUnits: 'pixels', getLineWidth: 2.5 }));
     }
   }
   if (selTrip) {
@@ -1549,7 +1610,7 @@ function layers() {
     if (j >= 0 && schedule.ts[j] <= clock.t && schedule.te[j] >= clock.t) {
       const p = [0, 0, 0];
       schedule.position(j, clock.t, p);
-      out.push(new ScatterplotLayer({ id: 'selBus', data: [p], getPosition: (d) => [d[0], d[1]], radiusUnits: 'pixels', getRadius: 9, getFillColor: [...selGeom.c, 255], stroked: true, getLineColor: [255, 255, 255], lineWidthUnits: 'pixels', getLineWidth: 3 }));
+      out.push(new ScatterplotLayer({ id: 'selBus', data: [p], getPosition: (d) => P(d[0], d[1]), radiusUnits: 'pixels', getRadius: 9, getFillColor: [...selGeom.c, 255], stroked: true, getLineColor: [255, 255, 255], lineWidthUnits: 'pixels', getLineWidth: 3 }));
       if (follow) followTo(p[0], p[1]);
     } else if (follow) {
       // 追っている便が終点に着いた（または時刻を戻して、まだ出ていない）: 追いかけるのをやめる（2026-10-04）
@@ -1557,6 +1618,7 @@ function layers() {
       refreshPanel();
     }
   }
+  if (terrain3d) { const mm = zScale(exag); return out.map((l) => l.clone({ modelMatrix: mm })); }
   return out;
 }
 
@@ -2000,6 +2062,7 @@ function renderSources() {
       <li>鉄道の線路・列車の走る線: 国土数値情報（鉄道データ N02-24）国土交通省（CC BY 4.0）</li>
       <li>全国のバス停留所: 国土数値情報（バス停留所データ P11-22）国土交通省（CC BY 4.0）</li>
       <li>重ねる地図（「表示」で選んだとき）: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（国土地理院。淡色地図・標準地図・全国最新写真（シームレス））</li>
+      <li>地形の立体（「表示」で選んだとき）: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（国土地理院。標高タイル（基盤地図情報数値標高モデル DEM10B）を地形と陰影に加工）</li>
       <li>人口（「表示」で選んだとき）: 出典 <a href="https://www.e-stat.go.jp/" target="_blank" rel="noopener">政府統計の総合窓口（e-Stat）</a>、令和 2 年国勢調査 地域メッシュ統計（3 次メッシュ・5 次メッシュ。総務省統計局）。1 km² あたりの人数を色にして加工。公共交通の徒歩圏の外の人口は、国土数値情報のバス停留所データ（P11）・鉄道データ（N02）の駅と時刻表データのバス停から、バス停 300 m・駅 800 m の外を計算（政府標準利用規約 第 2.0 版）</li>
     </ul>
     <p>データの作成日: ${esc(index.generated.slice(0, 10))}</p>

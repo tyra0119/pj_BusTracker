@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"><meta name="build" content="71f7e12-1020">
+<meta charset="utf-8"><meta name="build" content="7681f0f-1816">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>全国バス・鉄道軌跡マップ</title>
 <!-- 地図の軌跡（シアン）と乗り物（黄）。指定が無いとブラウザがサイトの一番上の /favicon.ico を取りに行き 404 になっていた -->
@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
 <link rel="preconnect" href="https://tiles.basemaps.cartocdn.com" crossorigin>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="./style.css?v=71f7e12-1020">
+<link rel="stylesheet" href="./style.css?v=7681f0f-1816">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
 </head>
@@ -65,6 +65,7 @@
       </select>
     </label>
     <label class="check"><input id="bldg3d" type="checkbox"> 3D の建物（地図を傾けて、拡大すると建物が立ち上がる）</label>
+    <label class="check"><input id="terrain3d" type="checkbox"> 地形を立体に（山が立ち上がり、バス・電車も山の上を走る。引いて見るほど高さを強める）</label>
     <label>人口（国勢調査 2020）
       <select id="popMode">
         <option value="" selected>なし</option>
@@ -137,6 +138,7 @@
     <li><b>実際の位置</b>（白い縁の印と、明滅する輪。<b>ひし形 = バス、角の丸い四角 = 電車</b>。時刻表どおりのバスの丸とは形で見分けられます）は、走っているバス・列車が配信している現在地（GTFS リアルタイム）です。「いま」のときだけ出ます。色は時刻表との差（緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い）、細い線の先がその便の時刻表どおりの位置です。印を押すと、その車両を地図が追いかけます（地図を手で動かすとやめます）。位置の配信は 30 秒ごとなので、その間は遅れの分だけ時刻表に沿って動かしています。今は公共交通オープンデータセンターの配信（関東バス・京王バス・西武バス・横浜市営・川崎市・都営・JR東日本・京王線・東武線など約 40）を使っています。</li>
     <li><b>デマンド交通</b>は予約して乗るので決まった経路がありません。乗れる区域を、受付の時間帯に光らせて出します。</li>
     <li>「表示」の<b>3D の建物</b>をオンにすると、地図を傾けて、拡大したとき（縮尺 14 以上）に建物を高さどおりに立ち上げます。2 本指を上下に動かすと傾きを変えられます。少し重くなります。</li>
+    <li>「表示」の<b>地形を立体に</b>をオンにすると、国土地理院の標高で山を立ち上げます。バス・列車・軌跡・停留所も山の上を走ります。引いて見るほど高さを強めます（日本全体でおよそ 24 倍、縮尺 10 より拡大すると 1.5 倍）。</li>
     <li>「表示」で、軌跡の長さ・地図の明るさのほか、<b>国土地理院の地図（淡色地図・標準地図・航空写真）を半透明で重ねる</b>ことができます。地域や地名が分かりにくいときに。濃さも変えられます。</li>
     <li>右上のボタン: 拡大・縮小・方角（北を上・真上からに戻す。右ドラッグで回す・上下に動かすと傾く。スマホは 2 本指で回す・上下に動かすと傾く）・現在地・全体表示。</li>
     <li>上の検索欄で、系統名・事業者名・停留所名から探せます。</li>
@@ -147,6 +149,6 @@
 </dialog>
 
 <div id="tip" hidden></div>
-<script type="module" src="./app.mjs?v=71f7e12-1020"></script>
+<script type="module" src="./app.mjs?v=7681f0f-1816"></script>
 </body>
 </html>
