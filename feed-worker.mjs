@@ -1,7 +1,7 @@
 // フィードの取得と解析を、画面とは別のスレッドで行う（feed-prepare.mjs）
 // 取るのは地域ごとにまとめたファイル（data/b/<k>.json。フィードの JSON を並べた配列。scripts/build-bundles.mjs）。
 // フィードごとに詰めて、まとめて渡す（配列はコピーせずに渡す）
-import { prepareFeed } from './feed-prepare.mjs?v=98a142d-dirty-1449';
+import { prepareFeed } from './feed-prepare.mjs?v=b0131b7-dirty-1459';
 
 self.onmessage = async (e) => {
   const { id, url } = e.data;
