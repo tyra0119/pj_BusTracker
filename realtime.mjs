@@ -4,8 +4,12 @@
 //  - 便の ID（trip_id）で時刻表の便に結び、実際の位置が時刻表では何時の位置かを求めて、遅れを出す
 // protobuf は最小のデコーダを自前で持つ（iss/web/gtfsrt.mjs と同じ）
 
-const RELAY = 'https://tyra.jp/odpt/api';
+// 手元（scripts/serve.mjs）で見るときは、そのサーバが中継サーバへ取り次ぐ（中継サーバの CORS は公開サイトだけ）
+const RELAY = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? '/odpt-relay' : 'https://tyra.jp/odpt/api';
 const INTERVAL = 30e3;
+// 公共交通データHUBシステム（ジョルダン）の配信は中継の /hub/vehicle/<会社ID>。HUB から許されたのは 2 分間隔なので 2 分に 1 回（2026-10-14）
+const HUB_INTERVAL = 120e3;
+const urlOf = (x) => (x.side === 'hub' ? `${RELAY}/hub/vehicle/${x.name}` : `${RELAY}/${x.side}/v4/gtfs/realtime/${x.name}`);
 const PER_ROUND = 8;
 
 function decode(buf, off = 0, end = buf.length) {
@@ -77,7 +81,7 @@ export class Realtime {
   async poll(feedOk) {
     if (this.busy || Date.now() < this.pausedUntil) return;
     const now = Date.now();
-    const due = this.list.filter((x) => feedOk(x.i) && now - (this.state.get(x.name)?.at ?? 0) >= INTERVAL)
+    const due = this.list.filter((x) => feedOk(x.i) && now - (this.state.get(x.name)?.at ?? 0) >= (x.side === 'hub' ? HUB_INTERVAL : INTERVAL))
       .sort((a, b) => (this.state.get(a.name)?.at ?? 0) - (this.state.get(b.name)?.at ?? 0)).slice(0, PER_ROUND);
     if (!due.length) return;
     this.busy = true;
@@ -85,7 +89,7 @@ export class Realtime {
       for (const x of due) {
         this.tripMap(x.i);
         try {
-          const res = await fetch(`${RELAY}/${x.side}/v4/gtfs/realtime/${x.name}`);
+          const res = await fetch(urlOf(x));
           if (res.status === 429 || res.status === 503) { this.pausedUntil = Date.now() + (Number(res.headers.get('Retry-After')) || 60) * 1000; break; }
           if (!res.ok) { this.state.set(x.name, { at: Date.now(), vehicles: [], error: `HTTP ${res.status}`, i: x.i }); continue; }
           const { feedTs, list } = parseVehicles(new Uint8Array(await res.arrayBuffer()));
