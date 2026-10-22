@@ -11,7 +11,7 @@
   :root {
     --bg: #0b0f14; --panel: #10151c; --line: rgba(255, 255, 255, 0.12);
     --text: #e8edf2; --muted: #93a1b0; --accent: #38d6ff; --accent2: #ffc400;
-    --bus: #ffc400; --hw: #38d6ff; --rail: #78ffa0; --demand: #ff8c46;
+    --bus: #ffc400; --hw: #38d6ff; --rail: #78ffa0; --demand: #ff8c46; --ship: #ff6ebe;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -152,8 +152,9 @@
     <tr><th><span class="dot" style="background:var(--hw)"></span> 高速バス</th><td>高速バス・空港リムジンなど（大きめの点・太い軌跡）。路線バスの事業者のデータの中の長距離の系統（停留所の間隔が長いもの）も高速バスとして扱います</td></tr>
     <tr><th><span class="dot" style="background:var(--rail)"></span> 鉄道</th><td>JR・私鉄・地下鉄・路面電車など（約 10 万便）</td></tr>
     <tr><th><span class="dot" style="background:var(--demand)"></span> デマンド</th><td>予約して乗るデマンド交通。決まった経路が無いので、<b>乗れる区域</b>を、予約を受け付けている時間帯に光らせます。数は受付中の区域の数です</td></tr>
+    <tr><th><span class="dot" style="background:var(--ship)"></span> 船</th><td>フェリー・高速船・離島の定期船・市営渡船など（約 60 のデータ）。東海汽船（伊豆諸島）・阪九フェリー・名門大洋フェリー・オレンジフェリー・桜島フェリー・八重山の離島航路など。航路の形が無いものは、港と港を結ぶ線が陸を横切るところだけ、陸を避けて海の上を通る道筋を計算して描きます（国土数値情報の行政区域から陸地の形を取っています）。選んだときは「航路・港・隻」と出ます</td></tr>
   </table>
-  <p class="muted">点と軌跡の色は乗り物の種類です（上の札と同じ: <span class="dot" style="background:#ffc400"></span> 路線バス、<span class="dot" style="background:#38d6ff"></span> 高速バス、<span class="dot" style="background:#78ffa0"></span> 鉄道）。大きさは路線バス・鉄道（約 1.35 倍）・高速バス（約 1.7 倍）の順に大きく、拡大するほど大きくなります。</p>
+  <p class="muted">点と軌跡の色は乗り物の種類です（上の札と同じ: <span class="dot" style="background:#ffc400"></span> 路線バス、<span class="dot" style="background:#38d6ff"></span> 高速バス、<span class="dot" style="background:#78ffa0"></span> 鉄道、<span class="dot" style="background:#ff6ebe"></span> 船）。大きさは路線バス・鉄道（約 1.35 倍）・船（約 1.5 倍）・高速バス（約 1.7 倍）の順に大きく、拡大するほど大きくなります。</p>
 
   <h2 id="select"><span class="n">5</span>系統・便・停留所・駅を選ぶ</h2>
   <div class="row">
@@ -182,7 +183,7 @@
   <figure><img src="manual/realtime.jpg" alt="東京の新宿付近。実際の位置の印（ひし形と角の丸い四角）が遅れの色で表示され、京王線の電車を押した情報欄に「約 3 分遅れ」と出ている" loading="lazy" width="1200" height="750"><figcaption>実際の位置。京王線の電車を押して追いかけているところ（約 3 分遅れ）</figcaption></figure>
   <ul>
     <li>印の形: <span class="sq" style="background:#ccc;transform:rotate(45deg) scale(.85)"></span> ひし形 = バス、<span class="sq" style="background:#ccc"></span> 角の丸い四角 = 電車（白い縁と、ゆっくり明滅する輪）。時刻表どおりのバスの丸とは形で見分けられます。</li>
-    <li>印の色は時刻表との差: <span class="dot" style="background:#50e182"></span> ほぼ時刻表どおり、<span class="dot" style="background:#ffc800"></span> 2〜5 分遅れ、<span class="dot" style="background:#ff5050"></span> 5 分以上遅れ、<span class="dot" style="background:#5aaaff"></span> 早い、<span class="dot" style="background:#c8cdd7"></span> 時刻表の便と結べなかったもの。</li>
+    <li>印の色は時刻表との差: <span class="dot" style="background:#50e182"></span> ほぼ時刻表どおり、<span class="dot" style="background:#ffc800"></span> 2〜5 分遅れ、<span class="dot" style="background:#ff5050"></span> 5 分以上遅れ、<span class="dot" style="background:#5aaaff"></span> 早い、<span class="dot" style="background:#c8cdd7"></span> 時刻表の便と結べなかったもの・終点に着いて運行を終えたもの。遅れは、配信された位置が時刻表ではいつ通る所かで求めます（行きと帰りで同じ道を通る便は、時刻の近いほうで見ます）。始発で発車を待っている車両は「ほぼ時刻表どおり」です。</li>
     <li>印から伸びる細い線の先が、同じ便の<b>時刻表どおりの位置</b>です。</li>
     <li>印を押すと、事業者・系統・行先・遅れ・位置の時刻が出て、地図がその車両を追いかけます。<span class="chip">この系統を見る</span> で時刻表の系統に切り替えられます。</li>
     <li>位置の配信は 30 秒ごとです。そのあいだは、測った位置から求めた遅れの分だけ時刻表に沿って動かし、次の位置が届いたら直します。</li>
@@ -236,7 +237,7 @@
     <tr><th>BODIK・自治体のオープンデータ</th><td>名古屋市・長崎県・大分県・滋賀県・鹿児島市・仙台市・札幌市・石川県・沖縄 OTTOP（沖縄本島・離島のバス）ほか。安来市（島根県）は、しまねオープンデータカタログの時刻表（Excel）を GTFS に組み直して使っています</td></tr>
     <tr><th>北海道オープンデータプラットフォーム（HODA）</th><td>北海道内のバス事業者・市町村の GTFS-JP。北海道オープンデータ推進協議会、クリエイティブ・コモンズ・ライセンス 表示 2.1 日本（改変して利用）</td></tr>
     <tr><th>事業者・協会の公開</th><td>広島県バス協会、Bus-Vision、佐賀のバス、富士急バス、ことでん、各地のコミュニティバスほか</td></tr>
-    <tr><th>国土数値情報（国土交通省）</th><td>鉄道データ（N02）: 線路・駅、列車を線路に沿わせる。バス停留所データ（P11）: 全国のバス停。CC BY 4.0</td></tr>
+    <tr><th>国土数値情報（国土交通省）</th><td>鉄道データ（N02）: 線路・駅、列車を線路に沿わせる。バス停留所データ（P11）: 全国のバス停。行政区域データ（N03）: 船の航路が陸を横切らないように使う陸地の形。CC BY 4.0</td></tr>
     <tr><th>OpenStreetMap</th><td>形状の無いバスの系統を道路に沿わせる道路データ、高速道路の上のバス停の位置（© OpenStreetMap contributors、ODbL）。背景地図は © CARTO、© OpenStreetMap contributors</td></tr>
     <tr><th>国土地理院</th><td>重ねる地図（淡色地図・標準地図・航空写真）。出典「地理院タイル」</td></tr>
     <tr><th>政府統計の総合窓口（e-Stat）</th><td>人口: 令和 2 年国勢調査 地域メッシュ統計（3 次メッシュ＝約 1 km 四方、5 次メッシュ＝約 250 m 四方。総務省統計局）。1 km² あたりの人数を色にして加工。徒歩圏の外の人口は、国土数値情報のバス停（P11）・駅（N02）と時刻表データのバス停から計算。政府標準利用規約（第 2.0 版）</td></tr>

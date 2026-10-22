@@ -1,8 +1,8 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=5b01dc6-dirty-1454';
-import { holidayName } from './holidays.mjs?v=5b01dc6-dirty-1454';
-import { Realtime } from './realtime.mjs?v=5b01dc6-dirty-1454';
-import { demSource, elevAt, withHeights, exaggerationFor, zScale, setViewZoom, onElevationChange } from './terrain.mjs?v=5b01dc6-dirty-1454';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=f3c69d2-dirty-1512';
+import { holidayName } from './holidays.mjs?v=f3c69d2-dirty-1512';
+import { Realtime } from './realtime.mjs?v=f3c69d2-dirty-1512';
+import { demSource, elevAt, withHeights, exaggerationFor, zScale, setViewZoom, onElevationChange } from './terrain.mjs?v=f3c69d2-dirty-1512';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -392,7 +392,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610220552');
+  const res = await fetch('./data/index.json?v=202610220604');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -407,7 +407,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=5b01dc6-dirty-1454', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=f3c69d2-dirty-1512', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -415,7 +415,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610220552`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610220604`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -1357,19 +1357,39 @@ function schedLookup(f, k) {
   }
   return schedIndex.get(`${f}:${k}`);
 }
-/** 実際の位置が、時刻表ではいつの位置か → 遅れ（秒。正なら遅れ）。形状上のいちばん近い点で見る */
+/** 実際の位置が、時刻表ではいつの位置か → 遅れ（秒。正なら遅れ）。結べないときは null
+ *  経路の各区間に下ろした足で見る。行きと帰りで同じ道を通る便や循環する便は、近い所（300 m 以内）が何か所もあるので、
+ *  その中で時刻表の時刻が測った時刻にいちばん近い所を選ぶ（前はいちばん近い頂点だけで、もう一方を選んで大きな遅れになり、
+ *  時刻表の位置まで何 km も線が伸びていた。2026-10-22）。
+ *  終点に着いて時刻表の到着より 5 分以上たった車両は、運行を終えて止まっているとみなして遅れを出さない（車庫・終点で待つ車両が
+ *  何十分も遅れの赤になっていた）。始発で発車を待っている車両は遅れ 0 */
 function delayOf(j, lon, lat, at = clock.t) {
   const { feed, pat, prof, start } = schedule.tripInfo(j);
   const sh = feed.shape(pat.g);
-  const kx = Math.cos(lat * Math.PI / 180);
-  let best = 0, bd = Infinity;
-  for (let v = 0; v < sh.lat.length; v++) { const dx = (sh.lon[v] - lon) * kx, dy = sh.lat[v] - lat; const d = dx * dx + dy * dy; if (d < bd) { bd = d; best = v; } }
-  if (Math.sqrt(bd) * 111000 > 800) return null; // 経路から 800 m 以上離れている: 便の結びつけが怪しい
-  const dist = sh.cum[best], d = pat.d, arr = prof.arr, dep = prof.dep, n = d.length;
-  let k = 0;
-  while (k < n - 2 && d[k + 1] < dist) k++;
-  const f = d[k + 1] > d[k] ? Math.min(1, Math.max(0, (dist - d[k]) / (d[k + 1] - d[k]))) : 0;
-  const tAt = start + dep[k] + f * (arr[k + 1] - dep[k]);
+  const kx = Math.cos(lat * Math.PI / 180), M = 111000;
+  const cands = [];
+  let bestD = Infinity, bestDist = 0;
+  for (let v = 0; v < sh.lat.length - 1; v++) {
+    const ax = (sh.lon[v] - lon) * kx, ay = sh.lat[v] - lat, ex = (sh.lon[v + 1] - sh.lon[v]) * kx, ey = sh.lat[v + 1] - sh.lat[v];
+    const L2 = ex * ex + ey * ey, u = L2 > 0 ? Math.min(1, Math.max(0, -(ax * ex + ay * ey) / L2)) : 0;
+    const dm = Math.hypot(ax + ex * u, ay + ey * u) * M, dist = sh.cum[v] + (sh.cum[v + 1] - sh.cum[v]) * u;
+    if (dm < bestD) { bestD = dm; bestDist = dist; }
+    if (dm < 300) cands.push(dist);
+  }
+  if (sh.lat.length === 1) { bestD = Math.hypot((sh.lon[0] - lon) * kx, sh.lat[0] - lat) * M; bestDist = 0; }
+  if (bestD > 800) return null; // 経路から 800 m 以上離れている: 便の結びつけが怪しい
+  if (!cands.length) cands.push(bestDist);
+  const d = pat.d, arr = prof.arr, dep = prof.dep, n = d.length;
+  const timeAt = (dist) => {
+    let k = 0;
+    while (k < n - 2 && d[k + 1] < dist) k++;
+    const f = d[k + 1] > d[k] ? Math.min(1, Math.max(0, (dist - d[k]) / (d[k + 1] - d[k]))) : 0;
+    return start + dep[k] + f * (arr[k + 1] - dep[k]);
+  };
+  let dist = cands[0], tAt = timeAt(dist);
+  for (const c of cands) { const t = timeAt(c); if (Math.abs(at - t) < Math.abs(at - tAt)) { tAt = t; dist = c; } }
+  if (dist >= d[n - 1] - 150 && at - tAt > 300) return null; // 終点に着いたあと（運行を終えた）
+  if (dist <= d[0] + 150 && at < tAt) return 0; // 始発で発車を待っている
   const delay = at - tAt;
   return Math.abs(delay) > 3 * 3600 ? null : delay;
 }
@@ -1584,7 +1604,8 @@ function layers() {
   if (rtOn && clock.live && rtData.length) {
     // 時刻表の位置 → 実際の位置 を細い線で結ぶ（ずれが見える）
     out.push(new LineLayer({
-      id: 'rtLinks', data: rtData.filter((d) => d.sp), getSourcePosition: (d) => P(d.sp[0], d.sp[1]), getTargetPosition: (d) => P(d.lon, d.lat),
+      // 2 km より離れた線は描かない（時刻表の便との結び付けが怪しく、地図を横切る線になるだけ。2026-10-22）
+      id: 'rtLinks', data: rtData.filter((d) => d.sp && Math.hypot((d.sp[0] - d.lon) * Math.cos(d.lat * Math.PI / 180), d.sp[1] - d.lat) * 111000 < 2000), getSourcePosition: (d) => P(d.sp[0], d.sp[1]), getTargetPosition: (d) => P(d.lon, d.lat),
       getColor: dark ? [255, 255, 255, 120] : [20, 30, 40, 140], getWidth: 1.2, widthUnits: 'pixels',
     }));
     // 配信中の本物の位置であることを示す、ゆっくり明滅する輪
@@ -1985,7 +2006,7 @@ let gIndex = null, gIndexLoading = false, pendingPick = null;
 function loadSearchIndex() {
   if (!MOBILE || gIndex || gIndexLoading) return;
   gIndexLoading = true;
-  fetch('./data/search.json?v=202610220552').then((r) => r.json()).then((x) => {
+  fetch('./data/search.json?v=202610220604').then((r) => r.json()).then((x) => {
     gIndex = x;
     if ($('q').value.trim()) $('q').dispatchEvent(new Event('input')); // 打ったあとに読めたら探し直す
   }).catch(() => { gIndexLoading = false; });
