@@ -2,8 +2,8 @@
 //  - フィード（build-data.mjs の出力）を読み、選んだ日に走る便を集める
 //  - 時刻 t（その日の 0 時からの秒）で、走っている便の位置を形状に沿って補間する
 //  - 軌跡（TripsLayer）用に、時間の窓の中の経路と通過時刻を作る
-import { holidayName } from './holidays.mjs?v=b0131b7-dirty-1459';
-import { prepareFeed } from './feed-prepare.mjs?v=b0131b7-dirty-1459';
+import { holidayName } from './holidays.mjs?v=5b01dc6-dirty-1454';
+import { prepareFeed } from './feed-prepare.mjs?v=5b01dc6-dirty-1454';
 
 const DAY = 86400;
 const EPOCH = Date.UTC(2000, 0, 1);
@@ -43,7 +43,7 @@ function cumDist(lat, lon) {
 // 路線の色が無いとき: 事業者ごとに見分けやすい明るい色
 // 点と軌跡の色は乗り物の種類で決める（上の札と同じ色。app.mjs の MODES）。以前は事業者の系統の色・データごとの色で、
 // 札の「高速バス」と同じシアンの路線バスがあり紛らわしかった（利用者の指定。2026-10-04）。事業者の色は route.color に残す
-const MODE_RGB = [[255, 196, 0], [56, 214, 255], [120, 255, 160], [255, 140, 70]];
+const MODE_RGB = [[255, 196, 0], [56, 214, 255], [120, 255, 160], [255, 140, 70], [255, 110, 190]];
 function hexColor(hex) {
   if (!hex) return null;
   const v = parseInt(hex, 16);
@@ -61,7 +61,7 @@ export class Feed {
     this.meta = meta;
     this.i = meta.i;
     this.agencies = d.agencies;
-    // mode: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通
+    // mode: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通 / 4 船（2026-10-22）
     this.routes = d.routes.map(([short, long, color, ai, mode]) => ({ short, long, color: hexColor(color), ai, mode: mode ?? 0, hw: mode === 1 }));
     for (const r of this.routes) r.rgb = MODE_RGB[r.mode] ?? MODE_RGB[0];
     this.svc = d.svc;

@@ -1,8 +1,8 @@
 // 全国バス・鉄道軌跡マップ: 地図（MapLibre）＋ deck.gl で、時刻表どおりのバスと軌跡を描く
-import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=b0131b7-dirty-1459';
-import { holidayName } from './holidays.mjs?v=b0131b7-dirty-1459';
-import { Realtime } from './realtime.mjs?v=b0131b7-dirty-1459';
-import { demSource, elevAt, withHeights, exaggerationFor, zScale, setViewZoom, onElevationChange } from './terrain.mjs?v=b0131b7-dirty-1459';
+import { Feed, Schedule, dayNumOf, dateKeyOf } from './engine.mjs?v=5b01dc6-dirty-1454';
+import { holidayName } from './holidays.mjs?v=5b01dc6-dirty-1454';
+import { Realtime } from './realtime.mjs?v=5b01dc6-dirty-1454';
+import { demSource, elevAt, withHeights, exaggerationFor, zScale, setViewZoom, onElevationChange } from './terrain.mjs?v=5b01dc6-dirty-1454';
 
 const { MapboxOverlay, TripsLayer, ScatterplotLayer, PathLayer, TextLayer, PolygonLayer, LineLayer, IconLayer } = deck;
 const $ = (id) => document.getElementById(id);
@@ -349,15 +349,17 @@ const LINES = [
 const RT_HELP = 'バス・電車が配信している「今の本当の位置」を出します（「いま」のときだけ）。色は時刻表との差、押すとその車両を追いかけます';
 // 開いたときは毎回すべてオフ（利用者の指定。2026-10-04）。前回の切り替えは覚えない
 const lineOn = { track: false, busline: false, hwline: false, motorway: false, stops: false };
-// 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通（上の札で切り替える）
+// 表示する乗り物: 0 路線バス / 1 高速バス / 2 鉄道 / 3 デマンド交通 / 4 船（上の札で切り替える。船は 2026-10-22 から）
 const MODES = [
   { key: 'bus', label: '路線バス', unit: '台', color: [255, 196, 0] },
   { key: 'hw', label: '高速バス', unit: '台', color: [56, 214, 255] },
   { key: 'rail', label: '鉄道', unit: '本', color: [120, 255, 160] },
   { key: 'demand', label: 'デマンド', unit: '区域', color: [255, 140, 70] },
+  { key: 'ship', label: '船', unit: '隻', color: [255, 110, 190] },
 ];
-const modeOn = [true, true, true, true];
-try { const v = JSON.parse(localStorage.getItem('bt.modes')); if (Array.isArray(v) && v.length === 4) v.forEach((x, i) => { modeOn[i] = !!x; }); } catch { /* 使えなくてもよい */ }
+const modeOn = [true, true, true, true, true];
+// 前の版は 4 つ（船が無い）で覚えている。足りない分はオンのまま
+try { const v = JSON.parse(localStorage.getItem('bt.modes')); if (Array.isArray(v) && v.length >= 4) v.slice(0, modeOn.length).forEach((x, i) => { modeOn[i] = !!x; }); } catch { /* 使えなくてもよい */ }
 const kindOk = (rt) => modeOn[rt.mode];
 let sel = null;            // 選んだ系統 { f, r, key }
 let selTrip = null;        // 選んだ便 { f, k, at }（フィード・便番号・出発の日時。日をまたいでも同じ回の便を指す）
@@ -390,7 +392,7 @@ let units = [];               // まとまり { k, ids, bbox, size, trips }
 const unitLoaded = new Set(); // 読み込んだまとまりの k
 const loadingNow = new Set(); // 読み込み中のまとまりの k
 async function loadAll() {
-  const res = await fetch('./data/index.json?v=202610210539');
+  const res = await fetch('./data/index.json?v=202610220552');
   index = await res.json();
   units = index.bundles ?? index.feeds.map((m) => ({ k: m.i, ids: [m.i], bbox: m.bbox, size: m.size, trips: m.trips, single: true }));
   renderSources();
@@ -405,7 +407,7 @@ const pending = new Map();
 let reqId = 0;
 try {
   for (let k = 0; k < (MOBILE ? 2 : 3); k++) {
-    const w = new Worker('./feed-worker.mjs?v=b0131b7-dirty-1459', { type: 'module' });
+    const w = new Worker('./feed-worker.mjs?v=5b01dc6-dirty-1454', { type: 'module' });
     w.onmessage = (e) => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.data); };
     w.onerror = () => { w.broken = true; };
     workers.push(w);
@@ -413,7 +415,7 @@ try {
 } catch { /* Worker が使えない */ }
 /** まとまり u のフィードを、ids の順の配列で返す（Worker で詰めたもの、または JSON そのもの） */
 function fetchUnit(u) {
-  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610210539`, location.href).href;
+  const url = new URL(u.single ? `./data/f/${u.k}.json` : `./data/b/${u.k}.json?v=202610220552`, location.href).href;
   const plain = () => fetch(url).then((r) => r.json()).then((x) => (Array.isArray(x) ? x : [x]));
   const w = workers.filter((x) => !x.broken)[reqId % Math.max(1, workers.length)];
   if (!w) return plain();
@@ -542,8 +544,8 @@ let colBuf = new Uint8Array(4 << 16);
 let radBuf = new Float32Array(1 << 16);
 let runIdx = new Int32Array(1 << 16); // 描いた点 → 便
 let nRun = 0, nAll = 0;
-const nMode = [0, 0, 0, 0];   // 画面の中で走っている数（乗り物ごと）
-const nModeAll = [0, 0, 0, 0]; // 読み込んだ全データの中
+const nMode = [0, 0, 0, 0, 0];   // 画面の中で走っている数（乗り物ごと）
+const nModeAll = [0, 0, 0, 0, 0]; // 読み込んだ全データの中
 let nView = 0;
 const tmp = [0, 0, 0];
 function updateHeads() {
@@ -573,7 +575,7 @@ function updateHeads() {
     const c = rt.rgb;
     const on = !sel || (sel.f === fi && sel.r === pat.r);
     colBuf[q * 4] = c[0]; colBuf[q * 4 + 1] = c[1]; colBuf[q * 4 + 2] = c[2]; colBuf[q * 4 + 3] = on ? 255 : 40;
-    radBuf[q] = rt.mode === 1 ? r * 1.7 + 1 : rt.mode === 2 ? r * 1.35 + 0.5 : r;
+    radBuf[q] = rt.mode === 1 ? r * 1.7 + 1 : rt.mode === 2 ? r * 1.35 + 0.5 : rt.mode === 4 ? r * 1.5 + 0.5 : r;
     q++;
   }
   nRun = q;
@@ -1096,7 +1098,7 @@ function fitRoute() {
   map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: narrow ? { top: 120, bottom: 360, left: 30, right: 30 } : { top: 100, bottom: 160, left: 60, right: 420 }, maxZoom: 15, duration: 900 });
 }
 // 乗り物ごとの言葉（鉄道は 列車・駅・本、ほかは バス・停留所・台）
-const words = (rt) => (rt?.mode === 2 ? { v: '列車', stop: '駅', unit: '本', line: '路線' } : { v: 'バス', stop: '停留所', unit: '台', line: '系統' });
+const words = (rt) => (rt?.mode === 2 ? { v: '列車', stop: '駅', unit: '本', line: '路線' } : rt?.mode === 4 ? { v: '船', stop: '港', unit: '隻', line: '航路' } : { v: 'バス', stop: '停留所', unit: '台', line: '系統' });
 const routeName = (rt) => rt.short || rt.long || '（系統名なし）';
 const agencyName = (feed, rt) => (feed.agencies[rt.ai]?.[0] || feed.meta.agencies?.[0] || feed.meta.org || feed.meta.name);
 
@@ -1792,8 +1794,8 @@ function renderChips() {
     b.title = !rtOn ? RT_HELP : !clock.live ? '実際の位置は「いま」のときだけ見られます（押すと「いま」に戻ります）' : `実際の位置（GTFS リアルタイム） ${rtData.length} 台。色: 緑 ほぼ時刻表どおり／黄 2〜5 分遅れ／赤 5 分以上遅れ／青 早い`;
   }
   const vb = map.getBounds();
-  const counts = [nMode[0], nMode[1], nMode[2], activeAreas.filter((d) => { const [x, y] = d.poly[0]; return x >= vb.getWest() && x <= vb.getEast() && y >= vb.getSouth() && y <= vb.getNorth(); }).length];
-  [...el.children].forEach((b, i) => { b.querySelector('b').textContent = fmt(counts[i]); b.title = `画面の中: ${MODES[i].label} ${fmt(counts[i])} ${MODES[i].unit}（全体 ${fmt(i < 3 ? nModeAll[i] : activeAreas.length)}）${modeOn[i] ? '' : '（非表示）'}`; });
+  const counts = [nMode[0], nMode[1], nMode[2], activeAreas.filter((d) => { const [x, y] = d.poly[0]; return x >= vb.getWest() && x <= vb.getEast() && y >= vb.getSouth() && y <= vb.getNorth(); }).length, nMode[4]];
+  [...el.children].forEach((b, i) => { b.querySelector('b').textContent = fmt(counts[i]); b.title = `画面の中: ${MODES[i].label} ${fmt(counts[i])} ${MODES[i].unit}（全体 ${fmt(i !== 3 ? nModeAll[i] : activeAreas.length)}）${modeOn[i] ? '' : '（非表示）'}`; });
 }
 $('theme').onchange = (e) => {
   theme = e.target.value;
@@ -1983,7 +1985,7 @@ let gIndex = null, gIndexLoading = false, pendingPick = null;
 function loadSearchIndex() {
   if (!MOBILE || gIndex || gIndexLoading) return;
   gIndexLoading = true;
-  fetch('./data/search.json?v=202610210539').then((r) => r.json()).then((x) => {
+  fetch('./data/search.json?v=202610220552').then((r) => r.json()).then((x) => {
     gIndex = x;
     if ($('q').value.trim()) $('q').dispatchEvent(new Event('input')); // 打ったあとに読めたら探し直す
   }).catch(() => { gIndexLoading = false; });
